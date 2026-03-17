@@ -1,0 +1,13 @@
+pub mod auth;
+pub mod download;
+pub mod media;
+pub mod player;
+pub mod playlist;
+pub mod playlists;
+pub mod local_files;
+pub mod profile;
+pub mod radio;
+pub mod discord;
+pub mod songs;
+pub mod stats;
+pub mod updater;
