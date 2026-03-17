@@ -1,6 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePlayer } from "@/stores/playerStore";
-import { initDiscordRpc, updateDiscordPresence, clearDiscordPresence, disconnectDiscordRpc } from "@/lib/api";
+import { initDiscordRpc, updateDiscordPresence, clearDiscordPresence, disconnectDiscordRpc, uploadCoverTemp } from "@/lib/api";
 
 const CDN = "https://api.juicevault.xyz";
 
@@ -29,13 +29,18 @@ function getPagePresence(ctx) {
   return { details: "Idling", status: "Home", largeImage: "logo", largeText: "JuiceVault", smallImage: null, smallText: null, activityType: 0 };
 }
 
+const localCoverCache = new Map();
+
 export function useDiscordRPC(enabled, ctx) {
   const { state } = usePlayer();
   const connectedRef = useRef(false);
   const lastUpdateRef = useRef("");
   const pendingRef = useRef(null);
+  const [localCoverUrl, setLocalCoverUrl] = useState(null);
+  const uploadingRef = useRef(null);
 
   useEffect(() => {
+    console.log("[RPC] enabled =", enabled);
     if (!enabled) {
       if (connectedRef.current) {
         clearDiscordPresence().catch(() => {});
@@ -47,10 +52,11 @@ export function useDiscordRPC(enabled, ctx) {
 
     initDiscordRpc()
       .then(() => {
+        console.log("[RPC] Connected");
         connectedRef.current = true;
         if (pendingRef.current) { pendingRef.current(); pendingRef.current = null; }
       })
-      .catch((e) => console.warn("Discord RPC init failed:", e));
+      .catch((e) => console.error("[RPC] Init failed:", e));
 
     return () => {
       if (connectedRef.current) {
@@ -83,15 +89,20 @@ export function useDiscordRPC(enabled, ctx) {
           "JuiceVault",
           Math.floor(Date.now() / 1000),
           2,
-        ).catch(() => {});
+        ).catch((e) => console.error("[RPC] Radio update failed:", e));
         return;
       }
 
       if (track && isPlaying) {
-        const key = `song:${track.id}:playing`;
+        const key = `song:${track.id}:playing:${localCoverUrl || ""}`;
         if (key === lastUpdateRef.current) return;
         lastUpdateRef.current = key;
-        const coverUrl = track.local ? null : (track.cover ? `${CDN}${track.cover}` : null);
+        let coverUrl;
+        if (track.local) {
+          coverUrl = localCoverCache.get(track.id) || localCoverUrl || null;
+        } else {
+          coverUrl = track.cover ? `${CDN}${track.cover}` : null;
+        }
         updateDiscordPresence(
           track.title || "Unknown Track",
           `by ${track.artist || "Unknown Artist"}`,
@@ -101,15 +112,20 @@ export function useDiscordRPC(enabled, ctx) {
           "JuiceVault",
           Math.floor(Date.now() / 1000),
           2,
-        ).catch(() => {});
+        ).catch((e) => console.error("[RPC] Playing update failed:", e));
         return;
       }
 
       if (track && !isPlaying) {
-        const key = `song:${track.id}:paused`;
+        const key = `song:${track.id}:paused:${localCoverUrl || ""}`;
         if (key === lastUpdateRef.current) return;
         lastUpdateRef.current = key;
-        const coverUrl = track.local ? null : (track.cover ? `${CDN}${track.cover}` : null);
+        let coverUrl;
+        if (track.local) {
+          coverUrl = localCoverCache.get(track.id) || localCoverUrl || null;
+        } else {
+          coverUrl = track.cover ? `${CDN}${track.cover}` : null;
+        }
         updateDiscordPresence(
           track.title || "Unknown Track",
           `by ${track.artist || "Unknown Artist"} — Paused`,
@@ -119,7 +135,7 @@ export function useDiscordRPC(enabled, ctx) {
           "JuiceVault",
           null,
           2,
-        ).catch(() => {});
+        ).catch((e) => console.error("[RPC] Paused update failed:", e));
         return;
       }
 
@@ -136,7 +152,7 @@ export function useDiscordRPC(enabled, ctx) {
         p.smallText,
         null,
         p.activityType,
-      ).catch(() => {});
+      ).catch((e) => console.error("[RPC] Page update failed:", e));
     };
 
     if (connectedRef.current) {
@@ -144,5 +160,30 @@ export function useDiscordRPC(enabled, ctx) {
     } else {
       pendingRef.current = doUpdate;
     }
-  }, [enabled, state.currentTrack, state.isPlaying, state.isRadio, ctx?.activePage, ctx?.playlistName, ctx?.mediaViewing]);
+  }, [enabled, state.currentTrack, state.isPlaying, state.isRadio, ctx?.activePage, ctx?.playlistName, ctx?.mediaViewing, localCoverUrl]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const track = state.currentTrack;
+    if (!track?.local || !track?.cover) {
+      setLocalCoverUrl(null);
+      uploadingRef.current = null;
+      return;
+    }
+    if (localCoverCache.has(track.id)) {
+      setLocalCoverUrl(localCoverCache.get(track.id));
+      return;
+    }
+    if (uploadingRef.current === track.id) return;
+    const hash = (track.file_hash || track.id?.replace("local:", "")) || "";
+    if (!hash) return;
+    uploadingRef.current = track.id;
+    uploadCoverTemp(hash).then((res) => {
+      if (res?.url) {
+        console.log("[RPC] Cover uploaded:", res.url);
+        localCoverCache.set(track.id, res.url);
+        setLocalCoverUrl(res.url);
+      }
+    }).catch((e) => console.error("[RPC] Cover upload failed:", e)).finally(() => { uploadingRef.current = null; });
+  }, [enabled, state.currentTrack]);
 }

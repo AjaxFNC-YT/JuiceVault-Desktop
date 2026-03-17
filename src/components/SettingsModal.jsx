@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { X, Check, SlidersHorizontal, FolderSync, HardDrive, FolderPlus, Trash2, RefreshCw } from "lucide-react";
-import { useTheme, THEMES } from "@/stores/themeStore";
+import { useTheme, THEMES, hexToRgb } from "@/stores/themeStore";
 import { useLocalFiles } from "@/stores/localFilesStore";
 import { open } from "@tauri-apps/plugin-dialog";
 import { updateUserPreferences } from "@/lib/api";
@@ -18,7 +18,9 @@ function Toggle({ on, onToggle, color = "bg-brand-red" }) {
 }
 
 function SettingsModal({ onClose, discordRpc, setDiscordRpc, onOpenPlayerPrefs }) {
-  const { themeId, setThemeId } = useTheme();
+  const { themeId, setThemeId, theme } = useTheme();
+  const a0 = hexToRgb(theme.accent[0]);
+  const a1 = hexToRgb(theme.accent[1]);
   const { enabled: localEnabled, sources, scanning, scanProgress, setEnabled: setLocalEnabled, addSource, removeSource, scanAllSources } = useLocalFiles();
   const [mergeSE, setMergeSE] = useState(localStorage.getItem("mergeSessionEdits") === "true");
 
@@ -40,13 +42,14 @@ function SettingsModal({ onClose, discordRpc, setDiscordRpc, onOpenPlayerPrefs }
     >
       <motion.div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-[580px] max-h-[85vh] rounded-2xl bg-[#141414] border border-white/[0.08] overflow-hidden flex flex-col"
+        className="w-full max-w-[580px] max-h-[85vh] rounded-2xl overflow-hidden flex flex-col"
+        style={{ background: `linear-gradient(180deg, rgba(${a1}, 0.15) 0%, rgba(${a1}, 0.05) 100%), #111113`, border: `1px solid rgba(${a1}, 0.18)`, boxShadow: `0 30px 80px rgba(0,0,0,0.5), 0 0 60px rgba(${a1}, 0.08)` }}
         initial={{ opacity: 0, scale: 0.92, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.92, y: 20 }}
         transition={{ duration: 0.25, ease: "easeOut" }}
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06]">
+        <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: `1px solid rgba(${a1}, 0.1)` }}>
           <h2 className="text-lg font-bold text-white">Settings</h2>
           <button onClick={onClose} className="text-white/30 hover:text-white/60 transition-colors">
             <X size={18} />
@@ -65,8 +68,9 @@ function SettingsModal({ onClose, discordRpc, setDiscordRpc, onOpenPlayerPrefs }
                     key={t.id}
                     onClick={() => setThemeId(t.id)}
                     className={`group relative rounded-xl overflow-hidden border transition-all ${
-                      active ? "border-brand-red ring-1 ring-brand-red/30" : "border-white/[0.08] hover:border-white/[0.15]"
+                      active ? "ring-1" : "border-white/[0.08] hover:border-white/[0.15]"
                     }`}
+                    style={active ? { borderColor: theme.accent[0], boxShadow: `0 0 0 1px rgba(${a0}, 0.3)` } : {}}
                   >
                     <div
                       className="h-16 w-full"
@@ -79,7 +83,7 @@ function SettingsModal({ onClose, discordRpc, setDiscordRpc, onOpenPlayerPrefs }
                       <p className={`text-[10px] font-medium truncate ${active ? "text-white" : "text-white/40"}`}>{t.name}</p>
                     </div>
                     {active && (
-                      <div className="absolute top-1.5 right-1.5 h-4 w-4 rounded-full bg-brand-red flex items-center justify-center">
+                      <div className="absolute top-1.5 right-1.5 h-4 w-4 rounded-full flex items-center justify-center" style={{ background: theme.accent[0] }}>
                         <Check size={10} className="text-white" strokeWidth={3} />
                       </div>
                     )}

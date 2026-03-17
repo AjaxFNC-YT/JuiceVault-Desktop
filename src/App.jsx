@@ -60,9 +60,10 @@ function App() {
         const res = await getCurrentUser();
         const prefs = res?.data?.preferences || res?.preferences;
         if (prefs) {
-          if (prefs.theme) localStorage.setItem("theme", prefs.theme);
+          if (prefs.theme) { localStorage.setItem("theme", prefs.theme); window.dispatchEvent(new Event("theme-sync")); }
           if (prefs.discordRpc != null) localStorage.setItem("discordRpc", String(prefs.discordRpc));
           if (prefs.mergeSessionEdits != null) localStorage.setItem("mergeSessionEdits", String(prefs.mergeSessionEdits));
+          if (prefs.sortBy) localStorage.setItem("sortBy", prefs.sortBy);
           if (prefs.localFilesEnabled != null) localStorage.setItem("localFilesEnabled", JSON.stringify(prefs.localFilesEnabled));
           if (prefs.localFilesSources != null) localStorage.setItem("localFilesSources", JSON.stringify(prefs.localFilesSources));
         }

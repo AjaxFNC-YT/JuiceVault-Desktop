@@ -135,7 +135,8 @@ function PlayerPreferencesModal({ onClose }) {
     >
       <motion.div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-[520px] rounded-2xl bg-[#141414] border border-white/[0.08] overflow-hidden flex flex-col"
+        className="w-full max-w-[520px] rounded-2xl overflow-hidden flex flex-col"
+        style={{ background: `linear-gradient(180deg, rgba(${hexToRgb(theme.accent[1])}, 0.15) 0%, rgba(${hexToRgb(theme.accent[1])}, 0.05) 100%), #111113`, border: `1px solid rgba(${hexToRgb(theme.accent[1])}, 0.18)`, boxShadow: `0 30px 80px rgba(0,0,0,0.5), 0 0 60px rgba(${hexToRgb(theme.accent[1])}, 0.08)` }}
         initial={{ opacity: 0, scale: 0.92, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.92, y: 20 }}

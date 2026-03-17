@@ -6,6 +6,7 @@ import {
   MapPin, Folder, Users, Wrench, File, Globe, Heart, Zap, Shield,
 } from "lucide-react";
 import { getSongMetadata, getTrackerInfo, downloadFile } from "@/lib/api";
+import { useTheme, hexToRgb } from "@/stores/themeStore";
 
 const CDN = "https://api.juicevault.xyz";
 
@@ -94,6 +95,9 @@ function getAltNames(meta, tracker) {
 }
 
 function SongInfoModal({ songId, onClose }) {
+  const { theme } = useTheme();
+  const a0 = hexToRgb(theme.accent[0]);
+  const a1 = hexToRgb(theme.accent[1]);
   const [meta, setMeta] = useState(null);
   const [tracker, setTracker] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -140,7 +144,8 @@ function SongInfoModal({ songId, onClose }) {
     >
       <motion.div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-[560px] max-h-[85vh] rounded-2xl bg-[#141414] border border-white/[0.08] overflow-hidden flex flex-col"
+        className="w-full max-w-[560px] max-h-[85vh] rounded-2xl overflow-hidden flex flex-col"
+        style={{ background: `linear-gradient(180deg, rgba(${a1}, 0.15) 0%, rgba(${a1}, 0.05) 100%), #111113`, border: `1px solid rgba(${a1}, 0.18)`, boxShadow: `0 30px 80px rgba(0,0,0,0.5), 0 0 60px rgba(${a1}, 0.08)` }}
         initial={{ opacity: 0, scale: 0.92, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.92, y: 20 }}
@@ -148,7 +153,7 @@ function SongInfoModal({ songId, onClose }) {
       >
         {loading ? (
           <div className="flex items-center justify-center py-20">
-            <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/10 border-t-brand-red" />
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/10" style={{ borderTopColor: theme.accent[0] }} />
           </div>
         ) : meta ? (
           <>

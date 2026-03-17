@@ -11,3 +11,5 @@ pub mod discord;
 pub mod songs;
 pub mod stats;
 pub mod updater;
+pub mod eras;
+pub mod cover_upload;

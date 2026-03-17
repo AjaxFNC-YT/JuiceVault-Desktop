@@ -195,6 +195,14 @@ export async function checkForUpdate() {
   return invoke("check_for_update");
 }
 
+export async function fetchSongEras(songIds) {
+  return invoke("fetch_song_eras", { songIds });
+}
+
+export async function uploadCoverTemp(fileHash) {
+  return invoke("upload_cover_temp", { fileHash });
+}
+
 export async function initDiscordRpc() {
   return invoke("init_discord_rpc");
 }

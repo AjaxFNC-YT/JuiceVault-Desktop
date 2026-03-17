@@ -104,6 +104,15 @@ export function ThemeProvider({ children }) {
 
   const theme = THEMES.find((t) => t.id === themeId) || THEMES[0];
 
+  useEffect(() => {
+    const handler = () => {
+      const stored = localStorage.getItem("theme");
+      if (stored && stored !== themeId) _setThemeId(stored);
+    };
+    window.addEventListener("theme-sync", handler);
+    return () => window.removeEventListener("theme-sync", handler);
+  }, [themeId]);
+
   const setThemeId = useCallback((id) => {
     _setThemeId(id);
     localStorage.setItem("theme", id);

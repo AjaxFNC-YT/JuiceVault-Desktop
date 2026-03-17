@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Music2, Trash2, ArrowLeft, Pencil, ImagePlus, X, ListMusic, Shuffle } from "lucide-react";
-import { getPlaylist, removeSongFromPlaylist, updatePlaylist, deletePlaylist, uploadPlaylistCover, removePlaylistCover } from "@/lib/api";
+import { Play, Music2, Trash2, ArrowLeft, Pencil, ImagePlus, X, ListMusic, Shuffle, Search } from "lucide-react";
+import { getPlaylist, removeSongFromPlaylist, updatePlaylist, deletePlaylist, uploadPlaylistCover, removePlaylistCover, fetchSongEras } from "@/lib/api";
 import { usePlayer } from "@/stores/playerStore";
 import { useTheme } from "@/stores/themeStore";
 import SongContextMenu from "@/components/SongContextMenu";
+import FilterBar, { getDefaultSort } from "@/components/FilterBar";
 
 const CDN = "https://api.juicevault.xyz";
 
@@ -19,6 +20,11 @@ function PlaylistView({ playlistId, playlistName, onBack, onInfo, onAddToPlaylis
   const [coverUploading, setCoverUploading] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const coverInputRef = useRef(null);
+  const [query, setQuery] = useState("");
+  const [sortBy, setSortBy] = useState(() => getDefaultSort());
+  const [eraMap, setEraMap] = useState({});
+  const [eraLoading, setEraLoading] = useState(false);
+  const [activeEras, setActiveEras] = useState(new Set());
   const { playTrack } = usePlayer();
 
   useEffect(() => {
@@ -35,8 +41,62 @@ function PlaylistView({ playlistId, playlistName, onBack, onInfo, onAddToPlaylis
     }).catch(() => setLoading(false));
   }, [playlistId]);
 
-  const songs = (playlist?.songs || []).map((s) => s.song).filter(Boolean);
+  const rawSongs = (playlist?.songs || []).map((s) => s.song).filter(Boolean);
   const coverUrl = playlist?.coverImage ? `${CDN}${playlist.coverImage}` : null;
+
+  useEffect(() => {
+    if (!rawSongs.length) return;
+    const ids = rawSongs.map((s) => s.id).filter(Boolean);
+    if (ids.length) {
+      setEraLoading(true);
+      fetchSongEras(ids).then((m) => setEraMap(m || {})).catch(() => {}).finally(() => setEraLoading(false));
+    }
+  }, [playlist]);
+
+  const { allEras, hasOther } = useMemo(() => {
+    const set = new Set();
+    let other = false;
+    for (const s of rawSongs) {
+      const era = s.era || eraMap[s.id];
+      if (era) set.add(era);
+      else other = true;
+    }
+    return { allEras: set, hasOther: other };
+  }, [rawSongs, eraMap]);
+
+  const handleEraToggle = (era) => {
+    setActiveEras((prev) => {
+      const next = new Set(prev);
+      if (next.has(era)) next.delete(era);
+      else next.add(era);
+      return next;
+    });
+  };
+
+  const songs = useMemo(() => {
+    let list = rawSongs;
+    if (query.trim()) {
+      const q = query.trim().toLowerCase();
+      list = list.filter((s) =>
+        (s.title || "").toLowerCase().includes(q) ||
+        (s.artist || "").toLowerCase().includes(q)
+      );
+    }
+    if (activeEras.size > 0) {
+      list = list.filter((s) => {
+        const era = s.era || eraMap[s.id];
+        if (era && activeEras.has(era)) return true;
+        if (!era && activeEras.has("__other__")) return true;
+        return false;
+      });
+    }
+    return [...list].sort((a, b) => {
+      if (sortBy === "a-z") return (a.title || "").localeCompare(b.title || "");
+      if (sortBy === "z-a") return (b.title || "").localeCompare(a.title || "");
+      if (sortBy === "most-played") return (b.play_count || 0) - (a.play_count || 0);
+      return 0;
+    });
+  }, [rawSongs, query, sortBy, activeEras, eraMap]);
 
   const handlePlay = (song, idx) => playTrack(song, songs, idx);
 
@@ -233,7 +293,7 @@ function PlaylistView({ playlistId, playlistName, onBack, onInfo, onAddToPlaylis
         )}
       </AnimatePresence>
 
-      {songs.length > 0 && (
+      {rawSongs.length > 0 && (
         <div className="flex items-center gap-2 mb-4">
           <button onClick={handlePlayAll} className="flex items-center gap-1.5 text-[12px] font-semibold text-white px-4 py-2 rounded-lg hover:opacity-90 transition-opacity" style={{ background: `linear-gradient(to right, ${theme.accent[0]}, ${theme.accent[1]})` }}>
             <Play size={14} fill="currentColor" /> Play All
@@ -242,6 +302,31 @@ function PlaylistView({ playlistId, playlistName, onBack, onInfo, onAddToPlaylis
             <Shuffle size={14} /> Shuffle
           </button>
         </div>
+      )}
+
+      {rawSongs.length > 0 && (
+        <>
+          <FilterBar
+            eras={allEras}
+            eraLoading={eraLoading}
+            activeEras={activeEras}
+            onEraToggle={handleEraToggle}
+            onClearEras={() => setActiveEras(new Set())}
+            sortBy={sortBy}
+            onSortChange={setSortBy}
+            hasOther={hasOther}
+          />
+          <div className="relative mb-4">
+            <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/30" />
+            <input
+              type="text"
+              placeholder="Search in playlist..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="w-full rounded-xl bg-white/[0.05] border border-white/[0.08] pl-10 pr-4 py-2.5 text-[13px] text-white placeholder-white/25 outline-none focus:border-white/15"
+            />
+          </div>
+        </>
       )}
 
       {songs.length > 0 ? (
@@ -284,7 +369,11 @@ function PlaylistView({ playlistId, playlistName, onBack, onInfo, onAddToPlaylis
           })}
         </div>
       ) : (
-        <p className="text-center text-white/25 py-16 text-sm">This playlist is empty — add songs from Browse or the play bar</p>
+        rawSongs.length > 0 ? (
+          <p className="text-center text-white/25 py-16 text-sm">No matches found</p>
+        ) : (
+          <p className="text-center text-white/25 py-16 text-sm">This playlist is empty — add songs from Browse or the play bar</p>
+        )
       )}
     </motion.div>
   );

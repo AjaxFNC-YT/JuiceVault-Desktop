@@ -51,6 +51,7 @@ function toLocalFile(f) {
     file_size: formatBytes(f.file_size),
     file_size_bytes: f.file_size,
     cover: f.cover ? convertFileSrc(f.cover) : null,
+    rawCoverPath: f.cover || null,
     play_count: 0,
   };
 }

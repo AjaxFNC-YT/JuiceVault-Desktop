@@ -2,8 +2,12 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { X } from "lucide-react";
 import { createPlaylist } from "@/lib/api";
+import { useTheme, hexToRgb } from "@/stores/themeStore";
 
 function CreatePlaylistModal({ onClose, onCreated }) {
+  const { theme } = useTheme();
+  const a0 = hexToRgb(theme.accent[0]);
+  const a1 = hexToRgb(theme.accent[1]);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [isPublic, setIsPublic] = useState(true);
@@ -37,7 +41,8 @@ function CreatePlaylistModal({ onClose, onCreated }) {
     >
       <motion.div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-[400px] rounded-2xl bg-[#141414] border border-white/[0.08] p-6"
+        className="w-full max-w-[400px] rounded-2xl p-6"
+        style={{ background: `linear-gradient(180deg, rgba(${a1}, 0.15) 0%, rgba(${a1}, 0.05) 100%), #111113`, border: `1px solid rgba(${a1}, 0.18)`, boxShadow: `0 30px 80px rgba(0,0,0,0.5), 0 0 60px rgba(${a1}, 0.08)` }}
         initial={{ opacity: 0, scale: 0.92, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.92, y: 20 }}
@@ -64,7 +69,10 @@ function CreatePlaylistModal({ onClose, onCreated }) {
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="My Playlist"
-              className="w-full rounded-lg bg-white/[0.05] border border-white/[0.08] px-3 py-2 text-[13px] text-white placeholder-white/20 outline-none focus:border-white/15"
+              className="w-full rounded-lg bg-white/[0.05] border border-white/[0.08] px-3 py-2 text-[13px] text-white placeholder-white/20 outline-none transition-colors"
+              style={{ outline: "none" }}
+              onFocus={(e) => e.target.style.borderColor = `rgba(${a1}, 0.3)`}
+              onBlur={(e) => e.target.style.borderColor = "rgba(255,255,255,0.08)"}
               autoFocus
             />
           </div>
@@ -75,7 +83,9 @@ function CreatePlaylistModal({ onClose, onCreated }) {
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Optional"
-              className="w-full rounded-lg bg-white/[0.05] border border-white/[0.08] px-3 py-2 text-[13px] text-white placeholder-white/20 outline-none focus:border-white/15"
+              className="w-full rounded-lg bg-white/[0.05] border border-white/[0.08] px-3 py-2 text-[13px] text-white placeholder-white/20 outline-none transition-colors"
+              onFocus={(e) => e.target.style.borderColor = `rgba(${a1}, 0.3)`}
+              onBlur={(e) => e.target.style.borderColor = "rgba(255,255,255,0.08)"}
             />
           </div>
           <label className="flex items-center gap-2 cursor-pointer">
@@ -90,7 +100,8 @@ function CreatePlaylistModal({ onClose, onCreated }) {
           <button
             type="submit"
             disabled={!name.trim() || loading}
-            className="rounded-lg bg-brand-red px-4 py-2.5 text-[13px] font-semibold text-white disabled:opacity-40"
+            className="rounded-lg px-4 py-2.5 text-[13px] font-semibold text-white disabled:opacity-40 transition-all hover:scale-[1.02] active:scale-[0.98]"
+            style={{ background: `linear-gradient(135deg, ${theme.accent[1]}, ${theme.accent[0]})` }}
           >
             {loading ? "Creating..." : "Create"}
           </button>

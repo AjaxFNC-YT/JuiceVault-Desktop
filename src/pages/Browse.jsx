@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, Loader2, Compass, Folder, ChevronLeft, Music2 } from "lucide-react";
-import { searchSongs, getAllSongs } from "@/lib/api";
+import { searchSongs, getAllSongs, fetchSongEras } from "@/lib/api";
 import SongList from "@/components/SongList";
+import FilterBar, { getDefaultSort } from "@/components/FilterBar";
 
 const isSessionEdit = (song) => !!song.is_session_edit;
 
@@ -14,15 +15,23 @@ function Browse({ onInfo, onAddToPlaylist }) {
   const [viewMode, setViewMode] = useState("list");
   const [initialLoad, setInitialLoad] = useState(true);
   const [inSessionEdits, setInSessionEdits] = useState(false);
+  const [sortBy, setSortBy] = useState(() => getDefaultSort());
+  const [eraMap, setEraMap] = useState({});
+  const [eraLoading, setEraLoading] = useState(false);
+  const [activeEras, setActiveEras] = useState(new Set());
   const mergeSessionEdits = localStorage.getItem("mergeSessionEdits") === "true";
 
   useEffect(() => {
     getAllSongs().then((res) => {
       const songs = res?.songs || [];
-      const sorted = [...songs].sort((a, b) => (b.play_count || 0) - (a.play_count || 0));
-      if (sorted.length) console.log("[Browse] Sample song fields:", Object.keys(sorted[0]), JSON.stringify(sorted[0]).slice(0, 500));
-      setFeatured(sorted);
+      setFeatured(songs);
       setInitialLoad(false);
+
+      const ids = songs.map((s) => s.id).filter(Boolean);
+      if (ids.length) {
+        setEraLoading(true);
+        fetchSongEras(ids).then((m) => setEraMap(m || {})).catch(() => {}).finally(() => setEraLoading(false));
+      }
     }).catch(() => setInitialLoad(false));
   }, []);
 
@@ -78,6 +87,44 @@ function Browse({ onInfo, onAddToPlaylist }) {
     return () => clearTimeout(timer);
   }, [query, doSearch]);
 
+  const { allEras, hasOther } = useMemo(() => {
+    const set = new Set();
+    let other = false;
+    for (const s of featured) {
+      const era = s.era || eraMap[s.id];
+      if (era) set.add(era);
+      else other = true;
+    }
+    return { allEras: set, hasOther: other };
+  }, [featured, eraMap]);
+
+  const handleEraToggle = (era) => {
+    setActiveEras((prev) => {
+      const next = new Set(prev);
+      if (next.has(era)) next.delete(era);
+      else next.add(era);
+      return next;
+    });
+  };
+
+  const applySortAndFilter = (list) => {
+    let out = list;
+    if (activeEras.size > 0) {
+      out = out.filter((s) => {
+        const era = s.era || eraMap[s.id];
+        if (era && activeEras.has(era)) return true;
+        if (!era && activeEras.has("__other__")) return true;
+        return false;
+      });
+    }
+    return [...out].sort((a, b) => {
+      if (sortBy === "a-z") return (a.title || "").localeCompare(b.title || "");
+      if (sortBy === "z-a") return (b.title || "").localeCompare(a.title || "");
+      if (sortBy === "most-played") return (b.play_count || 0) - (a.play_count || 0);
+      return 0;
+    });
+  };
+
   const sessionEditSongs = useMemo(() => featured.filter(isSessionEdit), [featured]);
   const regularSongs = useMemo(() => mergeSessionEdits ? featured : featured.filter((s) => !isSessionEdit(s)), [featured, mergeSessionEdits]);
   const searchFiltered = useMemo(() => {
@@ -86,7 +133,10 @@ function Browse({ onInfo, onAddToPlaylist }) {
     return results.filter((s) => !isSessionEdit(s));
   }, [results, mergeSessionEdits, inSessionEdits]);
 
-  const displaySongs = query.trim() ? searchFiltered : (inSessionEdits ? sessionEditSongs : regularSongs);
+  const displaySongs = useMemo(() => {
+    const base = query.trim() ? searchFiltered : (inSessionEdits ? sessionEditSongs : regularSongs);
+    return applySortAndFilter(base);
+  }, [query, searchFiltered, inSessionEdits, sessionEditSongs, regularSongs, sortBy, activeEras, eraMap]);
 
   return (
     <div className="px-8 py-6">
@@ -114,7 +164,18 @@ function Browse({ onInfo, onAddToPlaylist }) {
               </>
             )}
           </div>
-          <p className="text-sm text-white/30 mb-6">{inSessionEdits ? `${sessionEditSongs.length} session edits` : "Search the archive"}</p>
+          <p className="text-sm text-white/30 mb-4">{inSessionEdits ? `${sessionEditSongs.length} session edits` : "Search the archive"}</p>
+
+          <FilterBar
+            eras={allEras}
+            eraLoading={eraLoading}
+            activeEras={activeEras}
+            onEraToggle={handleEraToggle}
+            onClearEras={() => setActiveEras(new Set())}
+            sortBy={sortBy}
+            onSortChange={setSortBy}
+            hasOther={hasOther}
+          />
 
           <div className="relative mb-6">
             <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/30" />

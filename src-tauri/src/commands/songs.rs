@@ -42,7 +42,33 @@ pub async fn unlike_song(access_token: String, song_id: String) -> Result<Value,
 #[tauri::command]
 pub async fn get_liked_songs(access_token: String) -> Result<Value, String> {
     let client = ApiClient::new();
-    client.authed_get("/user/likes?limit=200", &access_token).await
+    let mut all_data: Vec<Value> = Vec::new();
+    let mut offset: usize = 0;
+    let limit: usize = 200;
+
+    loop {
+        let endpoint = format!("/user/likes?limit={}&offset={}", limit, offset);
+        let res = client.authed_get(&endpoint, &access_token).await?;
+
+        let batch = res.get("data")
+            .and_then(|d| d.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        let batch_len = batch.len();
+        all_data.extend(batch);
+
+        if batch_len < limit {
+            break;
+        }
+        offset += limit;
+    }
+
+    Ok(serde_json::json!({
+        "success": true,
+        "data": all_data,
+        "total": all_data.len()
+    }))
 }
 
 #[tauri::command]

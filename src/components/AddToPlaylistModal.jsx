@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { X, Music2, Search, Loader2, Heart, AlertCircle } from "lucide-react";
 import { getMyPlaylists, addSongsToPlaylist, removeSongFromPlaylist, likeSong, unlikeSong, getLikedSongs } from "@/lib/api";
+import { useTheme, hexToRgb } from "@/stores/themeStore";
 
 const CDN = "https://api.juicevault.xyz";
 
@@ -28,7 +29,8 @@ function Toggle({ on, onClick }) {
   return (
     <button
       onClick={(e) => { e.stopPropagation(); onClick(); }}
-      className={`relative w-9 h-5 rounded-full flex-shrink-0 transition-colors ${on ? "bg-emerald-500" : "bg-white/[0.12]"}`}
+      className={`relative w-9 h-5 rounded-full flex-shrink-0 transition-colors ${on ? "" : "bg-white/[0.12]"}`}
+      style={on ? { background: `linear-gradient(135deg, ${"#10b981"}, ${"#14b8a6"})` } : {}}
     >
       <div className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${on ? "left-[18px]" : "left-0.5"}`} />
     </button>
@@ -36,6 +38,9 @@ function Toggle({ on, onClick }) {
 }
 
 function AddToPlaylistModal({ song, onClose }) {
+  const { theme } = useTheme();
+  const a0 = hexToRgb(theme.accent[0]);
+  const a1 = hexToRgb(theme.accent[1]);
   const [playlists, setPlaylists] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -108,7 +113,7 @@ function AddToPlaylistModal({ song, onClose }) {
 
   return (
     <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/70" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-[400px] rounded-2xl bg-[#141414] border border-white/[0.08] overflow-hidden flex flex-col max-h-[75vh]">
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-[400px] rounded-2xl overflow-hidden flex flex-col max-h-[75vh]" style={{ background: `linear-gradient(180deg, rgba(${a1}, 0.15) 0%, rgba(${a1}, 0.05) 100%), #111113`, border: `1px solid rgba(${a1}, 0.18)`, boxShadow: `0 30px 80px rgba(0,0,0,0.5), 0 0 60px rgba(${a1}, 0.08)` }}>
         <div className="flex items-center justify-between px-5 pt-5 pb-3">
           <div>
             <h3 className="text-[15px] font-semibold text-white">Add to Playlist</h3>
@@ -127,7 +132,9 @@ function AddToPlaylistModal({ song, onClose }) {
                 placeholder="Search playlists..."
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                className="w-full rounded-lg bg-white/[0.05] border border-white/[0.06] pl-8 pr-3 py-2 text-[12px] text-white placeholder-white/20 outline-none focus:border-white/15"
+                className="w-full rounded-lg bg-white/[0.05] border border-white/[0.06] pl-8 pr-3 py-2 text-[12px] text-white placeholder-white/20 outline-none transition-colors"
+                onFocus={(e) => e.target.style.borderColor = `rgba(${a1}, 0.3)`}
+                onBlur={(e) => e.target.style.borderColor = "rgba(255,255,255,0.06)"}
               />
             </div>
           </div>

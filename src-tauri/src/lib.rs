@@ -11,6 +11,8 @@ pub fn run() {
         .manage(commands::discord::DiscordRpcState {
             client: std::sync::Mutex::new(None),
         })
+        .manage(commands::eras::EraCache::new())
+        .manage(commands::cover_upload::CoverUploadCache::new())
         .invoke_handler(tauri::generate_handler![
             commands::auth::login,
             commands::auth::register,
@@ -55,6 +57,8 @@ pub fn run() {
             commands::discord::disconnect_discord_rpc,
             commands::updater::get_app_version,
             commands::updater::check_for_update,
+            commands::eras::fetch_song_eras,
+            commands::cover_upload::upload_cover_temp,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
