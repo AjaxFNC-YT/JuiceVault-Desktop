@@ -160,35 +160,87 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "$PLIST" 2>/dev/null || true
 
       - name: Add background audio Swift code
+        shell: bash
         run: |
           SOURCES_DIR="src-tauri/gen/apple/Sources/juicevault-desktop"
-          printf '%s\n' \
-            'import AVFoundation' \
-            'import UIKit' \
-            '' \
-            'class BackgroundAudioManager {' \
-            '    static let shared = BackgroundAudioManager()' \
-            '' \
-            '    func configure() {' \
-            '        do {' \
-            '            let session = AVAudioSession.sharedInstance()' \
-            '            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])' \
-            '            try session.setActive(true)' \
-            '        } catch {' \
-            '            print("Failed to configure audio session: \\(error)")' \
-            '        }' \
-            '        NotificationCenter.default.addObserver(self, selector: #selector(handleInterruption), name: AVAudioSession.interruptionNotification, object: nil)' \
-            '    }' \
-            '' \
-            '    @objc private func handleInterruption(notification: Notification) {' \
-            '        guard let info = notification.userInfo,' \
-            '              let typeValue = info[AVAudioSessionInterruptionTypeKey] as? UInt,' \
-            '              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }' \
-            '        if type == .ended {' \
-            '            try? AVAudioSession.sharedInstance().setActive(true)' \
-            '        }' \
-            '    }' \
-            '}' > "${SOURCES_DIR}/BackgroundAudio.swift"
+          cat > "${SOURCES_DIR}/BackgroundAudio.swift" <<'BGAUDIO'
+          import AVFoundation
+          import UIKit
+
+          class BackgroundAudioManager {
+              static let shared = BackgroundAudioManager()
+              private var silentPlayer: AVAudioPlayer?
+
+              func configure() {
+                  do {
+                      let session = AVAudioSession.sharedInstance()
+                      try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+                      try session.setActive(true)
+                  } catch {
+                      print("[BG Audio] Failed to configure: \(error)")
+                  }
+                  prepareSilentPlayer()
+                  NotificationCenter.default.addObserver(self, selector: #selector(appDidEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
+                  NotificationCenter.default.addObserver(self, selector: #selector(appWillEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
+                  NotificationCenter.default.addObserver(self, selector: #selector(handleInterruption), name: AVAudioSession.interruptionNotification, object: nil)
+              }
+
+              private func prepareSilentPlayer() {
+                  let sampleRate = 44100.0
+                  let channels: UInt32 = 1
+                  let frames: UInt32 = UInt32(sampleRate)
+                  let bytesPerFrame: UInt32 = 2
+                  let dataSize = frames * bytesPerFrame
+                  var header = Data()
+                  func append(_ s: String) { header.append(contentsOf: Array(s.utf8)) }
+                  func appendUInt32(_ v: UInt32) { var val = v.littleEndian; header.append(Data(bytes: &val, count: 4)) }
+                  func appendUInt16(_ v: UInt16) { var val = v.littleEndian; header.append(Data(bytes: &val, count: 2)) }
+                  append("RIFF")
+                  appendUInt32(36 + dataSize)
+                  append("WAVEfmt ")
+                  appendUInt32(16)
+                  appendUInt16(1)
+                  appendUInt16(UInt16(channels))
+                  appendUInt32(UInt32(sampleRate))
+                  appendUInt32(UInt32(sampleRate) * bytesPerFrame * channels)
+                  appendUInt16(UInt16(bytesPerFrame * channels))
+                  appendUInt16(16)
+                  append("data")
+                  appendUInt32(dataSize)
+                  header.append(Data(count: Int(dataSize)))
+                  do {
+                      silentPlayer = try AVAudioPlayer(data: header)
+                      silentPlayer?.numberOfLoops = -1
+                      silentPlayer?.volume = 0.0
+                      silentPlayer?.prepareToPlay()
+                  } catch {
+                      print("[BG Audio] Silent player error: \(error)")
+                  }
+              }
+
+              @objc private func appDidEnterBackground() {
+                  try? AVAudioSession.sharedInstance().setActive(true)
+                  silentPlayer?.play()
+              }
+
+              @objc private func appWillEnterForeground() {
+                  silentPlayer?.pause()
+              }
+
+              @objc private func handleInterruption(notification: Notification) {
+                  guard let info = notification.userInfo,
+                        let typeValue = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+                        let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
+                  if type == .ended {
+                      try? AVAudioSession.sharedInstance().setActive(true)
+                      if UIApplication.shared.applicationState == .background {
+                          silentPlayer?.play()
+                      }
+                  }
+              }
+          }
+          BGAUDIO
+          sed -i '' 's/^          //' "${SOURCES_DIR}/BackgroundAudio.swift"
 
           APPDELEGATE=$(find src-tauri/gen/apple -name "*.swift" -path "*/Sources/*" | xargs grep -l "didFinishLaunchingWithOptions" 2>/dev/null | head -1)
           if [ -n "$APPDELEGATE" ] && [ -f "$APPDELEGATE" ]; then
