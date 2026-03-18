@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { Menu } from "lucide-react";
 import Background from "@/components/Background";
 import Sidebar from "@/components/Sidebar";
 import Overview from "@/pages/Overview";
@@ -19,6 +20,8 @@ import SettingsModal from "@/components/SettingsModal";
 import PlayerPreferencesModal from "@/components/PlayerPreferencesModal";
 import { useDiscordRPC } from "@/hooks/useDiscordRPC";
 import { updateUserPreferences } from "@/lib/api";
+import { useIsMobile } from "@/hooks/useMobile";
+import { useTheme } from "@/stores/themeStore";
 
 const pageFade = {
   initial: { opacity: 0, y: 12 },
@@ -28,6 +31,8 @@ const pageFade = {
 };
 
 function Dashboard({ user, onLogout }) {
+  const isMobile = useIsMobile();
+  const { theme } = useTheme();
   const [activePage, setActivePage] = useState("Overview");
   const [playlistMeta, setPlaylistMeta] = useState({ id: null, name: "" });
   const [showCreatePlaylist, setShowCreatePlaylist] = useState(false);
@@ -38,6 +43,7 @@ function Dashboard({ user, onLogout }) {
   const [showPlayerPrefs, setShowPlayerPrefs] = useState(false);
   const [discordRpc, setDiscordRpc] = useState(() => localStorage.getItem("discordRpc") !== "false");
   const [mediaViewing, setMediaViewing] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   useEffect(() => { localStorage.setItem("discordRpc", String(discordRpc)); updateUserPreferences({ discordRpc }).catch(() => {}); }, [discordRpc]);
   useDiscordRPC(discordRpc, { activePage, playlistName: playlistMeta.name, mediaViewing });
   const [playlistRefresh, setPlaylistRefresh] = useState(0);
@@ -48,6 +54,7 @@ function Dashboard({ user, onLogout }) {
       setPlaylistMeta({ id, name: extra || "Playlist" });
     }
     setActivePage(page);
+    if (isMobile) setSidebarOpen(false);
   };
 
   const handlePlaylistCreated = () => {
@@ -67,7 +74,7 @@ function Dashboard({ user, onLogout }) {
     if (activePage === "Local Files") return <LocalFiles {...songActions} />;
     if (isPlaylist) return <PlaylistView playlistId={playlistMeta.id} playlistName={playlistMeta.name} onBack={() => setActivePage("Overview")} onPlaylistChanged={refreshPlaylists} onPlaylistDeleted={() => { refreshPlaylists(); setActivePage("Overview"); }} {...songActions} />;
     return (
-      <div className="px-8 py-6">
+      <div className="px-4 md:px-8 py-6">
         <h1 className="text-2xl font-bold text-white">{activePage}</h1>
         <p className="mt-1 text-sm text-white/30">Coming soon</p>
       </div>
@@ -75,8 +82,23 @@ function Dashboard({ user, onLogout }) {
   };
 
   return (
-    <div className="fixed inset-0 top-9 flex flex-col overflow-hidden">
+    <div className={`fixed inset-0 flex flex-col overflow-hidden ${isMobile ? 'top-0' : 'top-9'}`}>
       <Background />
+
+      {isMobile && (
+        <div className="relative z-30 flex h-12 items-center justify-between px-4 flex-shrink-0"
+          style={{ background: `${theme.bg}ee`, backdropFilter: "blur(12px)" }}
+        >
+          <button onClick={() => setSidebarOpen(true)} className="text-white/60 active:text-white p-1">
+            <Menu size={22} />
+          </button>
+          <div className="flex items-center gap-2">
+            <img src="/jv-logo.png" alt="" className="h-[18px] w-[18px] rounded-[4px]" />
+            <span className="text-[13px] font-bold uppercase tracking-widest text-white/90">JuiceVault</span>
+          </div>
+          <div className="w-[30px]" />
+        </div>
+      )}
 
       <AnimatePresence>
         {showCreatePlaylist && (
@@ -88,24 +110,58 @@ function Dashboard({ user, onLogout }) {
       </AnimatePresence>
 
       <div className="relative z-10 flex flex-1 min-h-0">
-        <Sidebar
-          user={user}
-          onLogout={onLogout}
-          active={activePage}
-          onNavigate={handleNavigate}
-          onCreatePlaylist={() => setShowCreatePlaylist(true)}
-          refreshTrigger={playlistRefresh}
-          onSettings={() => setShowSettings(true)}
-        />
+        {isMobile ? (
+          <AnimatePresence>
+            {sidebarOpen && (
+              <>
+                <motion.div
+                  className="fixed inset-0 z-40 bg-black/60"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={() => setSidebarOpen(false)}
+                />
+                <motion.div
+                  className="fixed inset-y-0 left-0 z-50 w-[280px]"
+                  initial={{ x: "-100%" }}
+                  animate={{ x: 0 }}
+                  exit={{ x: "-100%" }}
+                  transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                >
+                  <Sidebar
+                    user={user}
+                    onLogout={onLogout}
+                    active={activePage}
+                    onNavigate={handleNavigate}
+                    onCreatePlaylist={() => setShowCreatePlaylist(true)}
+                    refreshTrigger={playlistRefresh}
+                    onSettings={() => setShowSettings(true)}
+                    mobile
+                  />
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
+        ) : (
+          <Sidebar
+            user={user}
+            onLogout={onLogout}
+            active={activePage}
+            onNavigate={handleNavigate}
+            onCreatePlaylist={() => setShowCreatePlaylist(true)}
+            refreshTrigger={playlistRefresh}
+            onSettings={() => setShowSettings(true)}
+          />
+        )}
 
         <main className="relative flex flex-1 flex-col overflow-hidden">
-          <div className={`flex-1 overflow-y-auto pb-20 ${activePage === "Overview" ? "" : "hidden"}`}>
+          <div className={`flex-1 overflow-y-auto ${isMobile ? 'pb-24' : 'pb-20'} ${activePage === "Overview" ? "" : "hidden"}`}>
             <Overview user={user} />
           </div>
 
           <AnimatePresence mode="wait">
             {activePage !== "Overview" && (
-              <motion.div key={activePage} className="flex-1 overflow-y-auto pb-20" {...pageFade}>
+              <motion.div key={activePage} className={`flex-1 overflow-y-auto ${isMobile ? 'pb-24' : 'pb-20'}`} {...pageFade}>
                 {renderPage()}
               </motion.div>
             )}

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Minus, Square, X, Copy } from "lucide-react";
 import { useTheme } from "@/stores/themeStore";
+import { useIsMobile } from "@/hooks/useMobile";
 
 const isTauri = !!window.__TAURI_INTERNALS__;
 
@@ -8,6 +9,7 @@ function TitleBar() {
   const [maximized, setMaximized] = useState(false);
   const appWindowRef = useRef(null);
   const { theme } = useTheme();
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     if (!isTauri) return;
@@ -24,7 +26,7 @@ function TitleBar() {
   };
   const close = () => appWindowRef.current?.close();
 
-  if (!isTauri) return null;
+  if (!isTauri || isMobile) return null;
 
   return (
     <div

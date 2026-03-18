@@ -24,7 +24,7 @@ function LocalFiles({ onInfo, onAddToPlaylist }) {
 
   if (!enabled) {
     return (
-      <div className="px-8 py-6">
+      <div className="px-4 md:px-8 py-6">
         <div className="flex flex-col items-center justify-center py-20 text-center">
           <HardDrive size={48} className="text-white/10 mb-4" />
           <h2 className="text-lg font-bold text-white/60 mb-2">Local Files Disabled</h2>
@@ -38,7 +38,7 @@ function LocalFiles({ onInfo, onAddToPlaylist }) {
 
   if (!sources.length) {
     return (
-      <div className="px-8 py-6">
+      <div className="px-4 md:px-8 py-6">
         <div className="flex flex-col items-center justify-center py-20 text-center">
           <FolderOpen size={48} className="text-white/10 mb-4" />
           <h2 className="text-lg font-bold text-white/60 mb-2">No Source Folders</h2>
@@ -51,7 +51,7 @@ function LocalFiles({ onInfo, onAddToPlaylist }) {
   }
 
   return (
-    <div className="px-8 py-6">
+    <div className="px-4 md:px-8 py-6">
       <div className="flex items-center justify-between mb-5">
         <div>
           <h1 className="text-2xl font-bold text-white">Local Files</h1>

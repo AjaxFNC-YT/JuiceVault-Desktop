@@ -8,6 +8,7 @@ import { usePlayer } from "@/stores/playerStore";
 import { useTheme, hexToRgb } from "@/stores/themeStore";
 import { downloadFile, showInExplorer, voteSkipRadio } from "@/lib/api";
 import PlayerPreferencesModal from "@/components/PlayerPreferencesModal";
+import { useIsMobile } from "@/hooks/useMobile";
 
 const CDN = "https://api.juicevault.xyz";
 
@@ -25,6 +26,7 @@ function FullscreenPlayer({ onClose, onInfo, onAddToPlaylist }) {
     setVolume, toggleShuffle, cycleRepeat, refreshRadio,
   } = usePlayer();
   const { theme } = useTheme();
+  const isMobile = useIsMobile();
   const a0 = hexToRgb(theme.accent[0]);
   const a1 = hexToRgb(theme.accent[1]);
 
@@ -239,7 +241,7 @@ function FullscreenPlayer({ onClose, onInfo, onAddToPlaylist }) {
           </div>
         )}
 
-        <div className="absolute top-14 left-6 z-20 flex gap-2">
+        <div className="absolute top-6 sm:top-14 left-4 sm:left-6 z-20 flex gap-2">
           <button onClick={onClose} className="w-10 h-10 rounded-xl flex items-center justify-center text-white/60 hover:text-white transition-all hover:scale-105" style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)" }} title="Back">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
           </button>
@@ -248,7 +250,7 @@ function FullscreenPlayer({ onClose, onInfo, onAddToPlaylist }) {
           </button>
         </div>
 
-        <div className="absolute top-14 right-6 z-20 flex gap-2">
+        <div className="absolute top-6 sm:top-14 right-4 sm:right-6 z-20 flex gap-2">
           {!track?.local && (
             <button onClick={() => track && onInfo?.(track.id)} className="w-10 h-10 rounded-xl flex items-center justify-center text-white/60 hover:text-white transition-all hover:scale-105" style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)" }} title="Song Info">
               <Info size={18} />
@@ -259,8 +261,8 @@ function FullscreenPlayer({ onClose, onInfo, onAddToPlaylist }) {
           </button>
         </div>
 
-        <div className="flex-1 flex flex-col items-center justify-center gap-8 px-6 pb-24">
-          <div className="w-[min(400px,50vw)] aspect-square rounded-3xl overflow-hidden flex-shrink-0" style={{ boxShadow: "0 30px 80px rgba(0,0,0,0.6)" }}>
+        <div className="flex-1 flex flex-col items-center justify-center gap-6 sm:gap-8 px-4 sm:px-6 pb-24">
+          <div className={`${isMobile ? 'w-[min(280px,70vw)]' : 'w-[min(400px,50vw)]'} aspect-square rounded-3xl overflow-hidden flex-shrink-0`} style={{ boxShadow: "0 30px 80px rgba(0,0,0,0.6)" }}>
             {cover ? (
               <img src={cover} alt="" className="h-full w-full object-cover" />
             ) : (
@@ -269,13 +271,13 @@ function FullscreenPlayer({ onClose, onInfo, onAddToPlaylist }) {
               </div>
             )}
           </div>
-          <div className="text-center max-w-[500px]">
-            <p className="text-3xl font-black text-white" style={{ wordBreak: "break-word" }}>{track?.title || "No track playing"}</p>
-            <p className="text-lg text-white/70 mt-2" style={{ wordBreak: "break-word" }}>{track?.artist || "—"}</p>
+          <div className="text-center max-w-[500px] px-2">
+            <p className="text-xl sm:text-3xl font-black text-white" style={{ wordBreak: "break-word" }}>{track?.title || "No track playing"}</p>
+            <p className="text-sm sm:text-lg text-white/70 mt-2" style={{ wordBreak: "break-word" }}>{track?.artist || "—"}</p>
           </div>
         </div>
 
-        <div className="fixed bottom-0 left-0 right-0 z-30 flex flex-col items-center px-8 py-2 gap-1" style={{ background: `linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0.7)), linear-gradient(to top, rgba(${a1},0.25), rgba(${a0},0.12))`, borderTop: `1px solid rgba(${a1},0.25)`, backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)" }}>
+        <div className="fixed bottom-0 left-0 right-0 z-30 flex flex-col items-center px-4 sm:px-8 py-2 gap-1" style={{ background: `linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0.7)), linear-gradient(to top, rgba(${a1},0.25), rgba(${a0},0.12))`, borderTop: `1px solid rgba(${a1},0.25)`, backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", paddingBottom: "max(8px, env(safe-area-inset-bottom, 8px))" }}>
           <div className="relative flex items-center justify-center w-full">
             <div className="flex items-center gap-1">
               {state.isRadio ? (
@@ -316,34 +318,36 @@ function FullscreenPlayer({ onClose, onInfo, onAddToPlaylist }) {
               )}
             </div>
 
-            <div className="absolute right-0 flex items-center gap-1">
-              <button onClick={() => track && onAddToPlaylist?.({ id: track.id, title: track.title, artist: track.artist, cover: track.cover })} className="w-10 h-10 rounded-xl flex items-center justify-center text-white/60 hover:text-white transition-all hover:scale-105" style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)" }} title="Add to Playlist">
-                <Check size={18} />
-              </button>
-              <button
-                onClick={() => { showWaveformRef.current = !showWaveform; setShowWaveform(!showWaveform); }}
-                className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all hover:scale-105 ${showWaveform ? '' : 'text-white/60 hover:text-white'}`}
-                style={showWaveform ? { background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.18)", color: theme.accent[0] } : { background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)" }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  {showWaveform ? <path d="M4 10v4M8 6v12M12 3v18M16 6v12M20 10v4" /> : <path d="M2 12h20" />}
-                </svg>
-              </button>
-              <div className="flex items-center gap-1">
-                <button onClick={() => setVolume(state.volume > 0 ? 0 : 0.7)} className="text-white/60 hover:text-white transition-colors p-1">
-                  {state.volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
+            {!isMobile && (
+              <div className="absolute right-0 flex items-center gap-1">
+                <button onClick={() => track && onAddToPlaylist?.({ id: track.id, title: track.title, artist: track.artist, cover: track.cover })} className="w-10 h-10 rounded-xl flex items-center justify-center text-white/60 hover:text-white transition-all hover:scale-105" style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)" }} title="Add to Playlist">
+                  <Check size={18} />
                 </button>
-                <div
-                  ref={volRef}
-                  onPointerDown={handleVolDown}
-                  className="relative h-1 w-20 rounded-sm group cursor-pointer"
-                  style={{ background: "rgba(255,255,255,0.2)" }}
+                <button
+                  onClick={() => { showWaveformRef.current = !showWaveform; setShowWaveform(!showWaveform); }}
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all hover:scale-105 ${showWaveform ? '' : 'text-white/60 hover:text-white'}`}
+                  style={showWaveform ? { background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.18)", color: theme.accent[0] } : { background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)" }}
                 >
-                  <div className="h-full rounded-sm" style={{ width: `${state.volume * 100}%`, background: `linear-gradient(to right, ${theme.accent[1]}, ${theme.accent[0]})` }} />
-                  <div className="absolute top-1/2 -translate-y-1/2 h-3 w-3 rounded-full bg-white shadow-md opacity-0 group-hover:opacity-100 transition-opacity" style={{ left: `calc(${state.volume * 100}% - 6px)` }} />
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    {showWaveform ? <path d="M4 10v4M8 6v12M12 3v18M16 6v12M20 10v4" /> : <path d="M2 12h20" />}
+                  </svg>
+                </button>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setVolume(state.volume > 0 ? 0 : 0.7)} className="text-white/60 hover:text-white transition-colors p-1">
+                    {state.volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
+                  </button>
+                  <div
+                    ref={volRef}
+                    onPointerDown={handleVolDown}
+                    className="relative h-1 w-20 rounded-sm group cursor-pointer"
+                    style={{ background: "rgba(255,255,255,0.2)" }}
+                  >
+                    <div className="h-full rounded-sm" style={{ width: `${state.volume * 100}%`, background: `linear-gradient(to right, ${theme.accent[1]}, ${theme.accent[0]})` }} />
+                    <div className="absolute top-1/2 -translate-y-1/2 h-3 w-3 rounded-full bg-white shadow-md opacity-0 group-hover:opacity-100 transition-opacity" style={{ left: `calc(${state.volume * 100}% - 6px)` }} />
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
 
           {state.isRadio ? (

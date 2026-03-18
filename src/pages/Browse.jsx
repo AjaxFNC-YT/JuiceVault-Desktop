@@ -139,7 +139,7 @@ function Browse({ onInfo, onAddToPlaylist }) {
   }, [query, searchFiltered, inSessionEdits, sessionEditSongs, regularSongs, sortBy, activeEras, eraMap]);
 
   return (
-    <div className="px-8 py-6">
+    <div className="px-4 md:px-8 py-6">
       <AnimatePresence mode="wait">
         <motion.div
           key={inSessionEdits ? "session" : "browse"}

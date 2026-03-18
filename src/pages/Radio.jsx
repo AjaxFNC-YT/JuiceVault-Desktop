@@ -71,8 +71,8 @@ function Radio() {
   const nextCover = nextSong?.cover ? `${CDN}${nextSong.cover}` : null;
 
   return (
-    <motion.div className="px-8 py-6" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
-      <div className="flex items-center justify-between mb-6">
+    <motion.div className="px-4 md:px-8 py-6" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-6">
         <div>
           <div className="flex items-center gap-2 mb-1">
             <RadioIcon size={20} className="text-white/40" />
@@ -93,7 +93,7 @@ function Radio() {
       ) : (
         <div className="flex flex-col gap-4">
           <div className="rounded-2xl overflow-hidden" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
-            <div className="flex items-center gap-5 p-5">
+            <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-5 p-4 sm:p-5">
               <div className="relative flex-shrink-0">
                 <div className="w-24 h-24 rounded-xl overflow-hidden" style={{ boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
                   {cover ? (

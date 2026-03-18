@@ -20,7 +20,7 @@ const LIBRARY_ITEMS = [
   { icon: HardDrive, label: "Local Files" },
 ];
 
-function Sidebar({ user, onLogout, active, onNavigate, onCreatePlaylist, refreshTrigger, onSettings }) {
+function Sidebar({ user, onLogout, active, onNavigate, onCreatePlaylist, refreshTrigger, onSettings, mobile }) {
   const { theme } = useTheme();
   const [playlists, setPlaylists] = useState([]);
 
@@ -37,7 +37,7 @@ function Sidebar({ user, onLogout, active, onNavigate, onCreatePlaylist, refresh
   useEffect(() => { refreshPlaylists(); }, [refreshTrigger]);
 
   return (
-    <aside className="relative z-10 flex h-full w-[240px] flex-shrink-0 flex-col overflow-hidden border-r border-white/[0.06] bg-white/[0.02]">
+    <aside className={`relative z-10 flex flex-col overflow-hidden border-r border-white/[0.06] ${mobile ? 'h-full w-full' : 'h-full w-[240px] flex-shrink-0'}`} style={{ background: mobile ? theme.bg : 'rgba(255,255,255,0.02)' }}>
       <div className="flex-1 overflow-y-auto px-2 pt-3 pb-2">
         <SectionLabel>JuiceVault</SectionLabel>
         {NAV_ITEMS.map(({ icon: Icon, label }) => (

@@ -170,13 +170,13 @@ function PlaylistView({ playlistId, playlistName, onBack, onInfo, onAddToPlaylis
   }
 
   return (
-    <motion.div className="px-8 py-6" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
+    <motion.div className="px-4 md:px-8 py-6" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
       <button onClick={onBack} className="flex items-center gap-1.5 text-[13px] text-white/30 hover:text-white/50 mb-4">
         <ArrowLeft size={14} />
         Back
       </button>
 
-      <div className="flex gap-5 mb-6">
+      <div className="flex flex-col sm:flex-row gap-5 mb-6">
         <div className="relative group flex-shrink-0">
           <div className="w-32 h-32 rounded-xl bg-white/[0.04] border border-white/[0.06] overflow-hidden flex items-center justify-center">
             {coverUrl ? (

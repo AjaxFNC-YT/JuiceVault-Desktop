@@ -31,7 +31,7 @@ function RecentlyAdded({ onInfo, onAddToPlaylist }) {
   }, []);
 
   return (
-    <motion.div className="px-8 py-6" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
+    <motion.div className="px-4 md:px-8 py-6" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
       <div className="flex items-center gap-3 mb-1">
         <Clock size={20} className="text-white/40" />
         <h1 className="text-2xl font-bold text-white">Recently Added</h1>

@@ -102,14 +102,14 @@ function Overview({ user }) {
   }
 
   return (
-    <motion.div className="px-8 py-6" variants={stagger} initial="initial" animate="animate">
+    <motion.div className="px-4 md:px-8 py-6" variants={stagger} initial="initial" animate="animate">
       <motion.div variants={fadeUp} className="flex items-center gap-2 mb-1">
         <SquareChartGantt size={20} className="text-white/40" />
         <h1 className="text-2xl font-bold text-white">Hey, {displayName}</h1>
       </motion.div>
       <motion.p variants={fadeUp} className="text-sm text-white/30 mb-8">Your listening overview</motion.p>
 
-      <motion.div variants={fadeUp} className="grid grid-cols-3 gap-3 mb-6">
+      <motion.div variants={fadeUp} className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
         <StatCard
           icon={Headphones}
           label="Total Plays"
@@ -125,7 +125,7 @@ function Overview({ user }) {
             <Flame size={14} className="text-white/30" />
             <span className="text-[12px] font-medium text-white/40">Streak</span>
           </div>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div className="rounded-lg bg-white/[0.04] px-2.5 py-1.5">
               <p className="text-[10px] font-medium text-white/30">Current</p>
               <p className="text-base font-bold text-white">{currentStreak}d</p>
@@ -138,7 +138,7 @@ function Overview({ user }) {
         </div>
       </motion.div>
 
-      <motion.div variants={fadeUp} className="grid grid-cols-2 gap-3 mb-6">
+      <motion.div variants={fadeUp} className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
         <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-5">
           <div className="flex items-center gap-2 mb-4">
             <Music2 size={16} style={{ color: theme.accent[1] }} />
@@ -180,7 +180,7 @@ function Overview({ user }) {
             <span className="text-[13px] font-semibold text-white/60">Most Played</span>
             {/* <span className="ml-auto text-[11px] text-white/20">{topSongs.length} songs</span> */}
           </div>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {topSongs.slice(0, 10).map((entry, i) => (
               <SongCard key={entry.songId} entry={entry} rank={i + 1} onPlay={() => {
                 const song = entry.song || {};

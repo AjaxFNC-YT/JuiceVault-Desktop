@@ -84,7 +84,7 @@ function Signup({ onAuth }) {
           )}
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className={labelClass}>Username</label>
                 <input
@@ -119,7 +119,7 @@ function Signup({ onAuth }) {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className={labelClass}>Password</label>
                 <div className="relative">

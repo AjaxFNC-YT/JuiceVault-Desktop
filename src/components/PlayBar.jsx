@@ -6,6 +6,7 @@ import { usePlayer } from "@/stores/playerStore";
 import { useTheme, hexToRgb } from "@/stores/themeStore";
 import { downloadFile, showInExplorer, voteSkipRadio } from "@/lib/api";
 import PlayerPreferencesModal from "@/components/PlayerPreferencesModal";
+import { useIsMobile } from "@/hooks/useMobile";
 
 const CDN = "https://api.juicevault.xyz";
 
@@ -53,6 +54,7 @@ function useDragSlider(ref, onChange, { onStart, onEnd } = {}) {
 function PlayBar({ onFullscreen, onInfo, onAddToPlaylist }) {
   const { state, togglePlay, skipNext, skipPrev, seek, startSeek, endSeek, setVolume, toggleShuffle, cycleRepeat, stopRadio, refreshRadio } = usePlayer();
   const { theme } = useTheme();
+  const isMobile = useIsMobile();
   const a0 = hexToRgb(theme.accent[0]);
   const a1 = hexToRgb(theme.accent[1]);
   const [showPrefs, setShowPrefs] = useState(false);
@@ -76,6 +78,59 @@ function PlayBar({ onFullscreen, onInfo, onAddToPlaylist }) {
   }, [setVolume]));
 
   const RepeatIcon = state.repeat === "one" ? Repeat1 : Repeat;
+
+  if (isMobile) {
+    return (
+      <div className="absolute bottom-0 left-0 right-0 z-20 flex flex-col"
+        style={{
+          background: `linear-gradient(135deg, rgba(${a1},0.12) 0%, rgba(${a0},0.08) 50%, rgba(${a1},0.12) 100%), linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0.7))`,
+          borderTop: `1px solid rgba(${a1},0.2)`,
+          backdropFilter: "blur(24px) saturate(1.4)",
+          WebkitBackdropFilter: "blur(24px) saturate(1.4)",
+          paddingBottom: "env(safe-area-inset-bottom, 0px)",
+        }}
+      >
+        <div className="flex items-center gap-3 px-3 py-2">
+          <button onClick={onFullscreen} className="h-11 w-11 rounded-lg bg-white/[0.06] flex items-center justify-center flex-shrink-0 overflow-hidden border border-white/[0.06]">
+            {cover ? (
+              <img src={cover} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <Music2 size={16} className="text-white/20" />
+            )}
+          </button>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[13px] font-medium text-white/90">{track?.title || "No track playing"}</p>
+            <div className="flex items-center gap-2">
+              <p className="truncate text-[11px] text-white/35">{track?.artist || "—"}</p>
+              {isRadio && (
+                <span className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-brand-red flex-shrink-0">
+                  <Radio size={9} className="animate-pulse" /> Live
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {!isRadio && (
+              <button onClick={skipPrev} className="text-white/50 active:text-white/80 p-1.5">
+                <SkipBack size={18} fill="currentColor" />
+              </button>
+            )}
+            <button onClick={togglePlay} className="flex h-9 w-9 items-center justify-center rounded-full text-white" style={{ background: `linear-gradient(135deg, ${theme.accent[1]}, ${theme.accent[0]})` }}>
+              {state.isPlaying ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" className="ml-0.5" />}
+            </button>
+            <button onClick={skipNext} className="text-white/50 active:text-white/80 p-1.5">
+              <SkipForward size={18} fill="currentColor" />
+            </button>
+          </div>
+        </div>
+        {!isRadio && state.duration > 0 && (
+          <div className="h-[2px] w-full bg-white/[0.06]">
+            <div className="h-full" style={{ width: `${pct}%`, background: `linear-gradient(to right, ${theme.accent[1]}, ${theme.accent[0]})` }} />
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="absolute bottom-0 left-0 right-0 z-20 flex h-[76px] items-center px-4"
