@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { X, Music2, Search, Loader2, Heart, AlertCircle } from "lucide-react";
 import { getMyPlaylists, addSongsToPlaylist, removeSongFromPlaylist, likeSong, unlikeSong, getLikedSongs } from "@/lib/api";
 import { useTheme, hexToRgb } from "@/stores/themeStore";
+import { useIsMobile } from "@/hooks/useMobile";
 
 const CDN = "https://api.juicevault.xyz";
 
@@ -38,6 +39,7 @@ function Toggle({ on, onClick }) {
 }
 
 function AddToPlaylistModal({ song, onClose }) {
+  const isMobile = useIsMobile();
   const { theme } = useTheme();
   const a0 = hexToRgb(theme.accent[0]);
   const a1 = hexToRgb(theme.accent[1]);
@@ -113,8 +115,8 @@ function AddToPlaylistModal({ song, onClose }) {
 
   return (
     <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/70" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-[400px] rounded-2xl overflow-hidden flex flex-col max-h-[75vh]" style={{ background: `linear-gradient(180deg, rgba(${a1}, 0.15) 0%, rgba(${a1}, 0.05) 100%), #111113`, border: `1px solid rgba(${a1}, 0.18)`, boxShadow: `0 30px 80px rgba(0,0,0,0.5), 0 0 60px rgba(${a1}, 0.08)` }}>
-        <div className="flex items-center justify-between px-5 pt-5 pb-3">
+      <div onClick={(e) => e.stopPropagation()} className={`overflow-hidden flex flex-col ${isMobile ? 'w-full h-full' : 'w-full max-w-[400px] rounded-2xl max-h-[75vh]'}`} style={{ background: `linear-gradient(180deg, rgba(${a1}, 0.15) 0%, rgba(${a1}, 0.05) 100%), #111113`, border: isMobile ? 'none' : `1px solid rgba(${a1}, 0.18)`, boxShadow: isMobile ? 'none' : `0 30px 80px rgba(0,0,0,0.5), 0 0 60px rgba(${a1}, 0.08)` }}>
+        <div className="flex items-center justify-between px-5 pt-5 pb-3" style={isMobile ? { paddingTop: "max(20px, env(safe-area-inset-top, 20px))" } : undefined}>
           <div>
             <h3 className="text-[15px] font-semibold text-white">Add to Playlist</h3>
             <p className="text-[11px] text-white/30 mt-0.5 truncate max-w-[280px]">{song.title || song.file_name}</p>
@@ -139,7 +141,7 @@ function AddToPlaylistModal({ song, onClose }) {
             </div>
           </div>
         )}
-        <div className="flex-1 overflow-y-auto px-3 pb-4">
+        <div className="flex-1 overflow-y-auto px-3 pb-4" style={isMobile ? { paddingBottom: "max(16px, env(safe-area-inset-bottom, 16px))" } : undefined}>
           <div
             onClick={handleLike}
             className="flex items-center gap-3 rounded-xl px-3 py-2.5 cursor-pointer transition-colors mb-1 hover:bg-white/[0.05]"

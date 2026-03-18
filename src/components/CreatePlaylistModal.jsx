@@ -3,8 +3,10 @@ import { motion } from "framer-motion";
 import { X } from "lucide-react";
 import { createPlaylist } from "@/lib/api";
 import { useTheme, hexToRgb } from "@/stores/themeStore";
+import { useIsMobile } from "@/hooks/useMobile";
 
 function CreatePlaylistModal({ onClose, onCreated }) {
+  const isMobile = useIsMobile();
   const { theme } = useTheme();
   const a0 = hexToRgb(theme.accent[0]);
   const a1 = hexToRgb(theme.accent[1]);
@@ -41,8 +43,8 @@ function CreatePlaylistModal({ onClose, onCreated }) {
     >
       <motion.div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-[400px] rounded-2xl p-6"
-        style={{ background: `linear-gradient(180deg, rgba(${a1}, 0.15) 0%, rgba(${a1}, 0.05) 100%), #111113`, border: `1px solid rgba(${a1}, 0.18)`, boxShadow: `0 30px 80px rgba(0,0,0,0.5), 0 0 60px rgba(${a1}, 0.08)` }}
+        className={`${isMobile ? 'w-full h-full flex flex-col' : 'w-full max-w-[400px] rounded-2xl'} p-6`}
+        style={{ background: `linear-gradient(180deg, rgba(${a1}, 0.15) 0%, rgba(${a1}, 0.05) 100%), #111113`, border: isMobile ? 'none' : `1px solid rgba(${a1}, 0.18)`, boxShadow: isMobile ? 'none' : `0 30px 80px rgba(0,0,0,0.5), 0 0 60px rgba(${a1}, 0.08)`, ...(isMobile ? { paddingTop: 'max(24px, env(safe-area-inset-top, 24px))', paddingBottom: 'max(24px, env(safe-area-inset-bottom, 24px))' } : {}) }}
         initial={{ opacity: 0, scale: 0.92, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.92, y: 20 }}

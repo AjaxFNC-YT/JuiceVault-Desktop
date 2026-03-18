@@ -85,7 +85,7 @@ function Dashboard({ user, onLogout }) {
     <div className={`fixed inset-0 flex flex-col overflow-hidden ${isMobile ? 'top-0' : 'top-9'}`}>
       <Background />
 
-      {isMobile && (
+      {isMobile && !sidebarOpen && (
         <div className="relative z-30 flex items-center justify-between px-4 flex-shrink-0"
           style={{
             background: `${theme.bg}ee`,
@@ -120,33 +120,26 @@ function Dashboard({ user, onLogout }) {
         {isMobile ? (
           <AnimatePresence>
             {sidebarOpen && (
-              <>
-                <motion.div
-                  className="fixed inset-0 z-40 bg-black/60"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  onClick={() => setSidebarOpen(false)}
+              <motion.div
+                className="fixed inset-0 z-50 flex flex-col"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                style={{ background: theme.bg }}
+              >
+                <Sidebar
+                  user={user}
+                  onLogout={onLogout}
+                  active={activePage}
+                  onNavigate={handleNavigate}
+                  onCreatePlaylist={() => setShowCreatePlaylist(true)}
+                  refreshTrigger={playlistRefresh}
+                  onSettings={() => setShowSettings(true)}
+                  mobile
+                  onClose={() => setSidebarOpen(false)}
                 />
-                <motion.div
-                  className="fixed inset-y-0 left-0 z-50 w-[280px]"
-                  initial={{ x: "-100%" }}
-                  animate={{ x: 0 }}
-                  exit={{ x: "-100%" }}
-                  transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                >
-                  <Sidebar
-                    user={user}
-                    onLogout={onLogout}
-                    active={activePage}
-                    onNavigate={handleNavigate}
-                    onCreatePlaylist={() => setShowCreatePlaylist(true)}
-                    refreshTrigger={playlistRefresh}
-                    onSettings={() => setShowSettings(true)}
-                    mobile
-                  />
-                </motion.div>
-              </>
+              </motion.div>
             )}
           </AnimatePresence>
         ) : (

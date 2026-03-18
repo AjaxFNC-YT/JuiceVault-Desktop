@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { X, RotateCcw } from "lucide-react";
 import { usePlayer } from "@/stores/playerStore";
 import { useTheme, hexToRgb } from "@/stores/themeStore";
+import { useIsMobile } from "@/hooks/useMobile";
 
 const EQ_PARAMS = [
   { key: "bass", label: "BASS", min: -20, max: 20, step: 0.5, unit: "dB" },
@@ -90,6 +91,7 @@ function VerticalSlider({ label, value, min, max, step, unit, accent, onChange }
 }
 
 function PlayerPreferencesModal({ onClose }) {
+  const isMobile = useIsMobile();
   const { setEQ, getEQ, setCrossfade, getCrossfade, ensureAnalyser } = usePlayer();
   const { theme } = useTheme();
 
@@ -135,14 +137,14 @@ function PlayerPreferencesModal({ onClose }) {
     >
       <motion.div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-[520px] rounded-2xl overflow-hidden flex flex-col"
-        style={{ background: `linear-gradient(180deg, rgba(${hexToRgb(theme.accent[1])}, 0.15) 0%, rgba(${hexToRgb(theme.accent[1])}, 0.05) 100%), #111113`, border: `1px solid rgba(${hexToRgb(theme.accent[1])}, 0.18)`, boxShadow: `0 30px 80px rgba(0,0,0,0.5), 0 0 60px rgba(${hexToRgb(theme.accent[1])}, 0.08)` }}
+        className={`overflow-hidden flex flex-col ${isMobile ? 'w-full h-full' : 'w-full max-w-[520px] rounded-2xl'}`}
+        style={{ background: `linear-gradient(180deg, rgba(${hexToRgb(theme.accent[1])}, 0.15) 0%, rgba(${hexToRgb(theme.accent[1])}, 0.05) 100%), #111113`, border: isMobile ? 'none' : `1px solid rgba(${hexToRgb(theme.accent[1])}, 0.18)`, boxShadow: isMobile ? 'none' : `0 30px 80px rgba(0,0,0,0.5), 0 0 60px rgba(${hexToRgb(theme.accent[1])}, 0.08)` }}
         initial={{ opacity: 0, scale: 0.92, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.92, y: 20 }}
         transition={{ duration: 0.25, ease: "easeOut" }}
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06]">
+        <div className="flex items-center justify-between px-5 sm:px-6 py-4 border-b border-white/[0.06]" style={isMobile ? { paddingTop: "max(16px, env(safe-area-inset-top, 16px))" } : undefined}>
           <h2 className="text-lg font-bold text-white">Player Preferences</h2>
           <div className="flex items-center gap-2">
             <button onClick={handleReset} className="text-white/30 hover:text-white/60 transition-colors p-1" title="Reset EQ">
@@ -154,7 +156,7 @@ function PlayerPreferencesModal({ onClose }) {
           </div>
         </div>
 
-        <div className="px-6 py-5">
+        <div className="flex-1 px-5 sm:px-6 py-5 overflow-y-auto" style={isMobile ? { paddingBottom: "max(20px, env(safe-area-inset-bottom, 20px))" } : undefined}>
           <p className="text-[11px] font-semibold uppercase tracking-widest text-white/25 mb-4">Equalizer</p>
 
           <div className="flex items-center justify-center gap-5">

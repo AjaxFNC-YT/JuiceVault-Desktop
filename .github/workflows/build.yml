@@ -153,6 +153,50 @@ jobs:
       - name: Initialize Tauri iOS
         run: npx tauri ios init
 
+      - name: Enable iOS background audio
+        run: |
+          PLIST="src-tauri/gen/apple/juicevault-desktop_iOS/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "$PLIST" 2>/dev/null || true
+
+      - name: Add background audio Swift code
+        run: |
+          SOURCES_DIR="src-tauri/gen/apple/Sources/juicevault-desktop"
+          printf '%s\n' \
+            'import AVFoundation' \
+            'import UIKit' \
+            '' \
+            'class BackgroundAudioManager {' \
+            '    static let shared = BackgroundAudioManager()' \
+            '' \
+            '    func configure() {' \
+            '        do {' \
+            '            let session = AVAudioSession.sharedInstance()' \
+            '            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])' \
+            '            try session.setActive(true)' \
+            '        } catch {' \
+            '            print("Failed to configure audio session: \\(error)")' \
+            '        }' \
+            '        NotificationCenter.default.addObserver(self, selector: #selector(handleInterruption), name: AVAudioSession.interruptionNotification, object: nil)' \
+            '    }' \
+            '' \
+            '    @objc private func handleInterruption(notification: Notification) {' \
+            '        guard let info = notification.userInfo,' \
+            '              let typeValue = info[AVAudioSessionInterruptionTypeKey] as? UInt,' \
+            '              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }' \
+            '        if type == .ended {' \
+            '            try? AVAudioSession.sharedInstance().setActive(true)' \
+            '        }' \
+            '    }' \
+            '}' > "${SOURCES_DIR}/BackgroundAudio.swift"
+
+          APPDELEGATE=$(find src-tauri/gen/apple -name "*.swift" -path "*/Sources/*" | xargs grep -l "didFinishLaunchingWithOptions" 2>/dev/null | head -1)
+          if [ -n "$APPDELEGATE" ] && [ -f "$APPDELEGATE" ]; then
+            if ! grep -q "BackgroundAudioManager" "$APPDELEGATE"; then
+              sed -i '' '/didFinishLaunchingWithOptions.*->.*Bool.*{/a\'$'\n''        BackgroundAudioManager.shared.configure()' "$APPDELEGATE"
+            fi
+          fi
+
       - name: Disable iOS code signing
         run: |
           PBXPROJ="src-tauri/gen/apple/juicevault-desktop.xcodeproj/project.pbxproj"

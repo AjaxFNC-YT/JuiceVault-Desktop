@@ -12,8 +12,11 @@ html,
 body,
 #root {
   height: 100%;
+  min-height: 100vh;
+  min-height: -webkit-fill-available;
   width: 100%;
   overflow: hidden;
+  background-color: #000000;
 }
 
 body {
@@ -57,6 +60,12 @@ input::-webkit-textfield-decoration-container {
 @media (max-width: 767px) {
   * {
     -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
   }
 }
 

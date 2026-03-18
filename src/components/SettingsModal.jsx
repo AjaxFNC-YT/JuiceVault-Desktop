@@ -5,6 +5,7 @@ import { useTheme, THEMES, hexToRgb } from "@/stores/themeStore";
 import { useLocalFiles } from "@/stores/localFilesStore";
 import { open } from "@tauri-apps/plugin-dialog";
 import { updateUserPreferences } from "@/lib/api";
+import { useIsMobile } from "@/hooks/useMobile";
 
 function Toggle({ on, onToggle, color = "bg-brand-red" }) {
   return (
@@ -18,6 +19,7 @@ function Toggle({ on, onToggle, color = "bg-brand-red" }) {
 }
 
 function SettingsModal({ onClose, discordRpc, setDiscordRpc, onOpenPlayerPrefs }) {
+  const isMobile = useIsMobile();
   const { themeId, setThemeId, theme } = useTheme();
   const a0 = hexToRgb(theme.accent[0]);
   const a1 = hexToRgb(theme.accent[1]);
@@ -42,25 +44,25 @@ function SettingsModal({ onClose, discordRpc, setDiscordRpc, onOpenPlayerPrefs }
     >
       <motion.div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-[580px] max-h-[85vh] rounded-2xl overflow-hidden flex flex-col"
-        style={{ background: `linear-gradient(180deg, rgba(${a1}, 0.15) 0%, rgba(${a1}, 0.05) 100%), #111113`, border: `1px solid rgba(${a1}, 0.18)`, boxShadow: `0 30px 80px rgba(0,0,0,0.5), 0 0 60px rgba(${a1}, 0.08)` }}
+        className={`overflow-hidden flex flex-col ${isMobile ? 'w-full h-full' : 'w-full max-w-[580px] max-h-[85vh] rounded-2xl'}`}
+        style={{ background: `linear-gradient(180deg, rgba(${a1}, 0.15) 0%, rgba(${a1}, 0.05) 100%), #111113`, border: isMobile ? 'none' : `1px solid rgba(${a1}, 0.18)`, boxShadow: isMobile ? 'none' : `0 30px 80px rgba(0,0,0,0.5), 0 0 60px rgba(${a1}, 0.08)` }}
         initial={{ opacity: 0, scale: 0.92, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.92, y: 20 }}
         transition={{ duration: 0.25, ease: "easeOut" }}
       >
-        <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: `1px solid rgba(${a1}, 0.1)` }}>
+        <div className="flex items-center justify-between px-5 sm:px-6 py-4" style={{ borderBottom: `1px solid rgba(${a1}, 0.1)`, paddingTop: isMobile ? "max(16px, env(safe-area-inset-top, 16px))" : undefined }}>
           <h2 className="text-lg font-bold text-white">Settings</h2>
           <button onClick={onClose} className="text-white/30 hover:text-white/60 transition-colors">
             <X size={18} />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+        <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-5 space-y-6" style={isMobile ? { paddingBottom: "max(20px, env(safe-area-inset-bottom, 20px))" } : undefined}>
 
           <section>
             <p className="text-[11px] font-semibold uppercase tracking-widest text-white/25 mb-3">Theme</p>
-            <div className="grid grid-cols-4 gap-3">
+            <div className={`grid ${isMobile ? 'grid-cols-3' : 'grid-cols-4'} gap-3`}>
               {THEMES.map((t) => {
                 const active = t.id === themeId;
                 return (

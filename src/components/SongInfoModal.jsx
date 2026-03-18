@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { getSongMetadata, getTrackerInfo, downloadFile } from "@/lib/api";
 import { useTheme, hexToRgb } from "@/stores/themeStore";
+import { useIsMobile } from "@/hooks/useMobile";
 
 const CDN = "https://api.juicevault.xyz";
 
@@ -95,6 +96,7 @@ function getAltNames(meta, tracker) {
 }
 
 function SongInfoModal({ songId, onClose }) {
+  const isMobile = useIsMobile();
   const { theme } = useTheme();
   const a0 = hexToRgb(theme.accent[0]);
   const a1 = hexToRgb(theme.accent[1]);
@@ -144,8 +146,8 @@ function SongInfoModal({ songId, onClose }) {
     >
       <motion.div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-[560px] max-h-[85vh] rounded-2xl overflow-hidden flex flex-col"
-        style={{ background: `linear-gradient(180deg, rgba(${a1}, 0.15) 0%, rgba(${a1}, 0.05) 100%), #111113`, border: `1px solid rgba(${a1}, 0.18)`, boxShadow: `0 30px 80px rgba(0,0,0,0.5), 0 0 60px rgba(${a1}, 0.08)` }}
+        className={`overflow-hidden flex flex-col ${isMobile ? 'w-full h-full' : 'w-full max-w-[560px] max-h-[85vh] rounded-2xl'}`}
+        style={{ background: `linear-gradient(180deg, rgba(${a1}, 0.15) 0%, rgba(${a1}, 0.05) 100%), #111113`, border: isMobile ? 'none' : `1px solid rgba(${a1}, 0.18)`, boxShadow: isMobile ? 'none' : `0 30px 80px rgba(0,0,0,0.5), 0 0 60px rgba(${a1}, 0.08)` }}
         initial={{ opacity: 0, scale: 0.92, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.92, y: 20 }}
@@ -185,7 +187,7 @@ function SongInfoModal({ songId, onClose }) {
               </div>
             </div>
 
-            <div className="overflow-y-auto flex-1 p-5">
+            <div className="overflow-y-auto flex-1 p-5" style={isMobile ? { paddingBottom: "max(20px, env(safe-area-inset-bottom, 20px))" } : undefined}>
               <h2 className="text-lg font-bold text-white">
                 {meta.title}{altNames ? <span className="text-white/30 font-normal">  |  {altNames}</span> : null}
               </h2>
