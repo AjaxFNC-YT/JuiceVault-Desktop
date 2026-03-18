@@ -86,8 +86,15 @@ function Dashboard({ user, onLogout }) {
       <Background />
 
       {isMobile && (
-        <div className="relative z-30 flex h-12 items-center justify-between px-4 flex-shrink-0"
-          style={{ background: `${theme.bg}ee`, backdropFilter: "blur(12px)" }}
+        <div className="relative z-30 flex items-center justify-between px-4 flex-shrink-0"
+          style={{
+            background: `${theme.bg}ee`,
+            backdropFilter: "blur(12px)",
+            paddingTop: "max(8px, env(safe-area-inset-top, 8px))",
+            paddingBottom: "8px",
+            paddingLeft: "max(16px, env(safe-area-inset-left, 16px))",
+            paddingRight: "max(16px, env(safe-area-inset-right, 16px))",
+          }}
         >
           <button onClick={() => setSidebarOpen(true)} className="text-white/60 active:text-white p-1">
             <Menu size={22} />
