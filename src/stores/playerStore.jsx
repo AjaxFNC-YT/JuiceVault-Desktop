@@ -1,9 +1,12 @@
 import { createContext, useContext, useReducer, useRef, useCallback, useEffect, useState } from "react";
 import { logListen, getRadioNowPlaying, getCurrentUser, updateUserPreferences } from "@/lib/api";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import * as NativeAudio from "tauri-plugin-native-audio-api";
 
 const API = "https://api.juicevault.xyz";
 const IS_IOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+const IS_ANDROID = /Android/i.test(navigator.userAgent);
+const IS_MOBILE = IS_IOS || IS_ANDROID;
 
 function getStreamUrl(track) {
   if (track?.local && track?.path) return convertFileSrc(track.path);
@@ -214,7 +217,7 @@ export function PlayerProvider({ children }) {
 
   const ensureAnalyser = useCallback(() => {
     if (analyserRef.current) { setAnalyserReady(true); return; }
-    if (IS_IOS) { setAnalyserReady(true); return; }
+    if (IS_MOBILE) { setAnalyserReady(true); return; }
     try {
       if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
       const actx = audioCtxRef.current;
@@ -273,6 +276,21 @@ export function PlayerProvider({ children }) {
       setAnalyserReady(true);
     } catch (e) { console.warn("Audio chain setup failed:", e); }
   }, [createImpulse]);
+  const nativePlayTrack = useCallback(async (track) => {
+    const url = getStreamUrl(track);
+    const coverUrl = track.cover ? (track.local ? track.cover : `${API}${track.cover}`) : undefined;
+    try {
+      await NativeAudio.setSource({
+        src: url,
+        id: typeof track.id === "number" ? track.id : undefined,
+        title: track.title || "Unknown",
+        artist: track.artist || "Unknown",
+        artworkUrl: coverUrl,
+      });
+      await NativeAudio.play();
+    } catch (e) { console.warn("[NativeAudio] play failed:", e); }
+  }, []);
+
   const skipNextRef = useRef(null);
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -280,6 +298,7 @@ export function PlayerProvider({ children }) {
   const autoCfTriggeredRef = useRef(false);
 
   useEffect(() => {
+    if (IS_MOBILE) return;
     const onTime = () => {
       if (stateRef.current.isRadio) return;
       dispatch({ type: "SET_PROGRESS", payload: audio.currentTime });
@@ -325,38 +344,75 @@ export function PlayerProvider({ children }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (!IS_MOBILE) return;
+    let unlisten;
+    const init = async () => {
+      try {
+        await NativeAudio.initialize();
+        unlisten = await NativeAudio.addStateListener((ns) => {
+          if (stateRef.current.isRadio) return;
+          if (ns.duration > 0) dispatch({ type: "SET_DURATION", payload: ns.duration });
+          dispatch({ type: "SET_PROGRESS", payload: ns.currentTime });
+          if (ns.status === "ended") {
+            const s = stateRef.current;
+            if (s.currentTrack && !s.currentTrack.local) {
+              logListen(s.currentTrack.id, Math.floor(ns.currentTime), true).catch(() => {});
+            }
+            if (s.repeat === "one") {
+              NativeAudio.seekTo(0).then(() => NativeAudio.play()).catch(() => {});
+            } else {
+              skipNextRef.current?.();
+            }
+          }
+        });
+      } catch (e) { console.warn("[NativeAudio] init failed:", e); }
+    };
+    init();
+    return () => { unlisten?.(); NativeAudio.dispose().catch(() => {}); };
+  }, []);
+
   const playTrack = useCallback((track, queue = [], index = 0) => {
     if (stateRef.current.isRadio) {
       clearInterval(radioPollingRef.current);
       dispatch({ type: "STOP_RADIO" });
     }
-    ensureAnalyser();
+    if (!IS_MOBILE) ensureAnalyser();
     seekSuppressCfRef.current = false;
     autoCfTriggeredRef.current = false;
     dispatch({ type: "PLAY_TRACK", payload: { track, queue, index } });
-    doCrossfade(getStreamUrl(track), stateRef.current.volume, 1);
+    if (IS_MOBILE) nativePlayTrack(track);
+    else doCrossfade(getStreamUrl(track), stateRef.current.volume, 1);
     listenStartRef.current = 0;
-  }, [ensureAnalyser, doCrossfade]);
+  }, [ensureAnalyser, doCrossfade, nativePlayTrack]);
 
   const togglePlay = useCallback(() => {
     if (state.isRadio) {
       if (state.isPlaying) {
-        audio.pause();
+        if (IS_MOBILE) NativeAudio.pause().catch(() => {});
+        else audio.pause();
         dispatch({ type: "SET_PLAYING", payload: false });
       } else {
-        audio.src = `${API}/radio/stream`;
-        audio.play().catch(() => {});
+        if (IS_MOBILE) {
+          NativeAudio.setSource({ src: `${API}/radio/stream`, title: "JuiceVault Radio", artist: "Live" })
+            .then(() => NativeAudio.play()).catch(() => {});
+        } else {
+          audio.src = `${API}/radio/stream`;
+          audio.play().catch(() => {});
+        }
         dispatch({ type: "SET_PLAYING", payload: true });
       }
       return;
     }
     if (!state.currentTrack) return;
     if (state.isPlaying) {
-      cancelCrossfade();
-      audio.pause();
+      if (!IS_MOBILE) cancelCrossfade();
+      if (IS_MOBILE) NativeAudio.pause().catch(() => {});
+      else audio.pause();
       dispatch({ type: "SET_PLAYING", payload: false });
     } else {
-      audio.play().catch(() => {});
+      if (IS_MOBILE) NativeAudio.play().catch(() => {});
+      else audio.play().catch(() => {});
       dispatch({ type: "SET_PLAYING", payload: true });
     }
   }, [state.currentTrack, state.isPlaying, state.isRadio, cancelCrossfade]);
@@ -364,25 +420,31 @@ export function PlayerProvider({ children }) {
   const seekVolRef = useRef(null);
 
   const seek = useCallback((time) => {
-    audio.currentTime = time;
+    if (IS_MOBILE) NativeAudio.seekTo(time).catch(() => {});
+    else audio.currentTime = time;
     dispatch({ type: "SET_PROGRESS", payload: time });
   }, []);
 
   const startSeek = useCallback(() => {
+    if (IS_MOBILE) return;
     seekVolRef.current = audio.volume;
     audio.volume = 0;
   }, []);
 
   const endSeek = useCallback((time) => {
-    audio.currentTime = time;
+    if (IS_MOBILE) {
+      NativeAudio.seekTo(time).catch(() => {});
+    } else {
+      audio.currentTime = time;
+      audio.volume = seekVolRef.current ?? state.volume;
+      seekVolRef.current = null;
+    }
     dispatch({ type: "SET_PROGRESS", payload: time });
-    audio.volume = seekVolRef.current ?? state.volume;
-    seekVolRef.current = null;
     seekSuppressCfRef.current = true;
   }, [state.volume]);
 
   const setVolume = useCallback((v) => {
-    audio.volume = v;
+    if (!IS_MOBILE) audio.volume = v;
     dispatch({ type: "SET_VOLUME", payload: v });
   }, []);
 
@@ -402,9 +464,10 @@ export function PlayerProvider({ children }) {
     seekSuppressCfRef.current = false;
     autoCfTriggeredRef.current = false;
     dispatch({ type: "SET_TRACK_DIRECT", payload: { track, index: nextIdx } });
-    doCrossfade(getStreamUrl(track), state.volume, 1);
+    if (IS_MOBILE) nativePlayTrack(track);
+    else doCrossfade(getStreamUrl(track), state.volume, 1);
     listenStartRef.current = 0;
-  }, [state.queue, state.queueIndex, state.shuffle, state.repeat, state.volume, doCrossfade]);
+  }, [state.queue, state.queueIndex, state.shuffle, state.repeat, state.volume, doCrossfade, nativePlayTrack]);
 
   skipNextRef.current = skipNext;
 
@@ -424,15 +487,20 @@ export function PlayerProvider({ children }) {
     const track = s.queue[nextIdx];
     seekSuppressCfRef.current = false;
     dispatch({ type: "SET_TRACK_DIRECT", payload: { track, index: nextIdx } });
-    doCrossfade(getStreamUrl(track), s.volume);
+    if (IS_MOBILE) nativePlayTrack(track);
+    else doCrossfade(getStreamUrl(track), s.volume);
     listenStartRef.current = 0;
-  }, [doCrossfade]);
+  }, [doCrossfade, nativePlayTrack]);
 
   const autoAdvanceRef = useRef(autoAdvanceNext);
   autoAdvanceRef.current = autoAdvanceNext;
 
   const skipPrev = useCallback(() => {
-    if (audio.currentTime > 3) { audio.currentTime = 0; return; }
+    if (IS_MOBILE) {
+      if (stateRef.current.progress > 3) { NativeAudio.seekTo(0).catch(() => {}); return; }
+    } else {
+      if (audio.currentTime > 3) { audio.currentTime = 0; return; }
+    }
     if (!state.queue.length) return;
     let prevIdx = state.queueIndex - 1;
     if (prevIdx < 0) prevIdx = state.repeat === "all" ? state.queue.length - 1 : 0;
@@ -440,9 +508,10 @@ export function PlayerProvider({ children }) {
     seekSuppressCfRef.current = false;
     autoCfTriggeredRef.current = false;
     dispatch({ type: "SET_TRACK_DIRECT", payload: { track, index: prevIdx } });
-    doCrossfade(getStreamUrl(track), state.volume, 1);
+    if (IS_MOBILE) nativePlayTrack(track);
+    else doCrossfade(getStreamUrl(track), state.volume, 1);
     listenStartRef.current = 0;
-  }, [state.queue, state.queueIndex, state.repeat, state.volume, doCrossfade]);
+  }, [state.queue, state.queueIndex, state.repeat, state.volume, doCrossfade, nativePlayTrack]);
 
   const toggleShuffle = useCallback(() => {
     dispatch({ type: "TOGGLE_SHUFFLE" });
@@ -471,9 +540,14 @@ export function PlayerProvider({ children }) {
   }, []);
 
   const playRadio = useCallback(() => {
-    ensureAnalyser();
-    audio.src = `${API}/radio/stream`;
-    audio.play().catch(() => {});
+    if (!IS_MOBILE) ensureAnalyser();
+    if (IS_MOBILE) {
+      NativeAudio.setSource({ src: `${API}/radio/stream`, title: "JuiceVault Radio", artist: "Live" })
+        .then(() => NativeAudio.play()).catch(() => {});
+    } else {
+      audio.src = `${API}/radio/stream`;
+      audio.play().catch(() => {});
+    }
     dispatch({ type: "PLAY_RADIO", payload: {} });
 
     const poll = async () => {
@@ -519,8 +593,8 @@ export function PlayerProvider({ children }) {
   const stopRadio = useCallback(() => {
     clearInterval(radioPollingRef.current);
     clearInterval(radioTickRef.current);
-    audio.pause();
-    audio.src = "";
+    if (IS_MOBILE) NativeAudio.pause().catch(() => {});
+    else { audio.pause(); audio.src = ""; }
     dispatch({ type: "STOP_RADIO" });
     dispatch({ type: "SET_PLAYING", payload: false });
   }, []);
@@ -530,7 +604,7 @@ export function PlayerProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    if (!("mediaSession" in navigator)) return;
+    if (IS_MOBILE || !("mediaSession" in navigator)) return;
     const track = state.currentTrack;
     if (!track) {
       navigator.mediaSession.metadata = null;
@@ -546,12 +620,12 @@ export function PlayerProvider({ children }) {
   }, [state.currentTrack?.id, state.currentTrack?.title, state.isRadio]);
 
   useEffect(() => {
-    if (!("mediaSession" in navigator)) return;
+    if (IS_MOBILE || !("mediaSession" in navigator)) return;
     navigator.mediaSession.playbackState = state.isPlaying ? "playing" : "paused";
   }, [state.isPlaying]);
 
   useEffect(() => {
-    if (!("mediaSession" in navigator)) return;
+    if (IS_MOBILE || !("mediaSession" in navigator)) return;
     const ms = navigator.mediaSession;
     ms.setActionHandler("play", () => { audio.play().catch(() => {}); dispatch({ type: "SET_PLAYING", payload: true }); });
     ms.setActionHandler("pause", () => { audio.pause(); dispatch({ type: "SET_PLAYING", payload: false }); });
@@ -668,6 +742,7 @@ export function PlayerProvider({ children }) {
     getEQ,
     setCrossfade,
     getCrossfade,
+    isMobile: IS_MOBILE,
   };
 
   return (
