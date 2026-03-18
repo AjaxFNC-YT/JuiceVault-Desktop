@@ -528,6 +528,44 @@ export function PlayerProvider({ children }) {
   }, []);
 
   useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+    const track = state.currentTrack;
+    if (!track) {
+      navigator.mediaSession.metadata = null;
+      return;
+    }
+    const coverUrl = track.cover ? (track.local ? track.cover : `${API}${track.cover}`) : undefined;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: track.title || "Unknown",
+      artist: track.artist || "Unknown",
+      album: state.isRadio ? "JuiceVault Radio" : "JuiceVault",
+      ...(coverUrl ? { artwork: [{ src: coverUrl, sizes: "512x512", type: "image/jpeg" }] } : {}),
+    });
+  }, [state.currentTrack?.id, state.currentTrack?.title, state.isRadio]);
+
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+    navigator.mediaSession.playbackState = state.isPlaying ? "playing" : "paused";
+  }, [state.isPlaying]);
+
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+    const ms = navigator.mediaSession;
+    ms.setActionHandler("play", () => { audio.play().catch(() => {}); dispatch({ type: "SET_PLAYING", payload: true }); });
+    ms.setActionHandler("pause", () => { audio.pause(); dispatch({ type: "SET_PLAYING", payload: false }); });
+    ms.setActionHandler("previoustrack", () => skipNextRef.current && skipPrev());
+    ms.setActionHandler("nexttrack", () => skipNextRef.current?.());
+    try { ms.setActionHandler("seekto", (details) => { if (details.seekTime != null) { audio.currentTime = details.seekTime; dispatch({ type: "SET_PROGRESS", payload: details.seekTime }); } }); } catch {}
+    return () => {
+      ms.setActionHandler("play", null);
+      ms.setActionHandler("pause", null);
+      ms.setActionHandler("previoustrack", null);
+      ms.setActionHandler("nexttrack", null);
+      try { ms.setActionHandler("seekto", null); } catch {}
+    };
+  }, [skipPrev]);
+
+  useEffect(() => {
     const loadPrefs = async () => {
       try {
         if (!localStorage.getItem("accessToken")) return;

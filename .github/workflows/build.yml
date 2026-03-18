@@ -180,6 +180,7 @@ jobs:
                       print("[BG Audio] Failed to configure: \(error)")
                   }
                   prepareSilentPlayer()
+                  silentPlayer?.play()
                   NotificationCenter.default.addObserver(self, selector: #selector(appDidEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
                   NotificationCenter.default.addObserver(self, selector: #selector(appWillEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
                   NotificationCenter.default.addObserver(self, selector: #selector(handleInterruption), name: AVAudioSession.interruptionNotification, object: nil)
@@ -220,11 +221,12 @@ jobs:
 
               @objc private func appDidEnterBackground() {
                   try? AVAudioSession.sharedInstance().setActive(true)
-                  silentPlayer?.play()
+                  if silentPlayer?.isPlaying != true {
+                      silentPlayer?.play()
+                  }
               }
 
               @objc private func appWillEnterForeground() {
-                  silentPlayer?.pause()
               }
 
               @objc private func handleInterruption(notification: Notification) {
