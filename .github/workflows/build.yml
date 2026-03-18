@@ -3,7 +3,7 @@ name: Build & Release
 on:
   push:
     branches:
-      - '**' # This makes it run automatically whenever you push to any branch
+      - '**'
   workflow_dispatch:
 
 permissions:
@@ -42,6 +42,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -76,9 +77,101 @@ jobs:
             src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
           if-no-files-found: ignore
 
-  # --- NEW JOB TO ZIP AND UPLOAD ---
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: sdkmanager "ndk;27.0.12077973"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Initialize Tauri Android
+        run: npx tauri android init
+
+      - name: Build Android APK
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+        run: npx tauri android build --apk
+
+      - name: Rename APK
+        run: |
+          APK=$(find src-tauri/gen/android -name "*.apk" -type f | head -1)
+          if [ -n "$APK" ]; then
+            cp "$APK" JuiceVault-android.apk
+          fi
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: juicevault-android
+          path: JuiceVault-android.apk
+          if-no-files-found: ignore
+
+  build-ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Initialize Tauri iOS
+        run: npx tauri ios init
+
+      - name: Build iOS (unsigned)
+        run: npx tauri ios build -- CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+
+      - name: Package unsigned IPA
+        run: |
+          APP_PATH=$(find src-tauri/gen/apple/build -name "*.app" -type d 2>/dev/null | head -1)
+          if [ -n "$APP_PATH" ]; then
+            mkdir -p Payload
+            cp -r "$APP_PATH" Payload/
+            zip -r JuiceVault-unsigned.ipa Payload
+          fi
+
+      - name: Upload iOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: juicevault-ios
+          path: JuiceVault-unsigned.ipa
+          if-no-files-found: ignore
+
   zip-and-upload:
-    needs: build # Tells this job to wait until all 'build' matrix jobs finish
+    needs: [build, build-android, build-ios]
+    if: ${{ always() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -88,7 +181,7 @@ jobs:
         with:
           pattern: juicevault-*
           path: all-platforms
-          merge-multiple: true # This throws all the .exe, .dmg, .deb, etc. into one folder
+          merge-multiple: true
 
       - name: Zip the artifacts
         run: |
@@ -99,7 +192,6 @@ jobs:
       - name: Get Version from Tauri Config
         id: get_version
         run: |
-          # Extracts the version from your tauri.conf.json so we know which GitHub release to target
           VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
@@ -107,5 +199,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Uploads the zip directly to the draft release made by the tauri action
           gh release upload "v${{ env.VERSION }}" JuiceVault-All-Platforms.zip --clobber
