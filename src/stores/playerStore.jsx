@@ -3,6 +3,7 @@ import { logListen, getRadioNowPlaying, getCurrentUser, updateUserPreferences } 
 import { convertFileSrc } from "@tauri-apps/api/core";
 
 const API = "https://api.juicevault.xyz";
+const IS_IOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 
 function getStreamUrl(track) {
   if (track?.local && track?.path) return convertFileSrc(track.path);
@@ -213,6 +214,7 @@ export function PlayerProvider({ children }) {
 
   const ensureAnalyser = useCallback(() => {
     if (analyserRef.current) { setAnalyserReady(true); return; }
+    if (IS_IOS) { setAnalyserReady(true); return; }
     try {
       if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
       const actx = audioCtxRef.current;
