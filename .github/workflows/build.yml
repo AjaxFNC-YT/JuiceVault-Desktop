@@ -115,11 +115,14 @@ jobs:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
         run: npx tauri android build --apk
 
-      - name: Rename APK
+      - name: Sign APK
         run: |
+          keytool -genkey -v -keystore release.keystore -alias juicevault -keyalg RSA -keysize 2048 -validity 10000 -storepass juicevault -keypass juicevault -dname "CN=JuiceVault,O=JuiceVault,C=US"
           APK=$(find src-tauri/gen/android -name "*.apk" -type f | head -1)
           if [ -n "$APK" ]; then
-            cp "$APK" JuiceVault-android.apk
+            BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/*/ | sort -V | tail -1)
+            ${BUILD_TOOLS}zipalign -v 4 "$APK" aligned.apk
+            ${BUILD_TOOLS}apksigner sign --ks release.keystore --ks-pass pass:juicevault --key-pass pass:juicevault --out JuiceVault-android.apk aligned.apk
           fi
 
       - name: Upload Android artifact
@@ -147,27 +150,29 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Build frontend
+        run: npm run build
+
       - name: Initialize Tauri iOS
         run: npx tauri ios init
 
-      - name: Disable iOS code signing
+      - name: Build iOS (unsigned via xcodebuild)
         run: |
-          PBXPROJ="src-tauri/gen/apple/juicevault-desktop.xcodeproj/project.pbxproj"
-          sed -i '' 's/CODE_SIGN_IDENTITY = ".*"/CODE_SIGN_IDENTITY = ""/g' "$PBXPROJ"
-          sed -i '' 's/DEVELOPMENT_TEAM = ".*"/DEVELOPMENT_TEAM = ""/g' "$PBXPROJ"
-          sed -i '' '/CODE_SIGNING_REQUIRED/d' "$PBXPROJ"
-          sed -i '' '/CODE_SIGNING_ALLOWED/d' "$PBXPROJ"
-          sed -i '' 's/CODE_SIGN_IDENTITY = ""/CODE_SIGN_IDENTITY = "";\n\t\t\t\tCODE_SIGNING_REQUIRED = NO;\n\t\t\t\tCODE_SIGNING_ALLOWED = NO;/g' "$PBXPROJ"
-
-      - name: Build iOS (unsigned)
-        run: npx tauri ios build
+          xcodebuild \
+            -scheme juicevault-desktop_iOS \
+            -workspace src-tauri/gen/apple/juicevault-desktop.xcodeproj/project.xcworkspace \
+            -sdk iphoneos \
+            -configuration Release \
+            -derivedDataPath src-tauri/gen/apple/build \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" \
+            build
 
       - name: Package unsigned IPA
         run: |
-          APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "*.app" -path "*/Release-iphoneos/*" -type d 2>/dev/null | head -1)
-          if [ -z "$APP_PATH" ]; then
-            APP_PATH=$(find src-tauri/gen/apple -name "*.app" -type d 2>/dev/null | head -1)
-          fi
+          APP_PATH=$(find src-tauri/gen/apple/build -name "*.app" -path "*/Release-iphoneos/*" -type d 2>/dev/null | head -1)
           if [ -n "$APP_PATH" ]; then
             mkdir -p Payload
             cp -r "$APP_PATH" Payload/
