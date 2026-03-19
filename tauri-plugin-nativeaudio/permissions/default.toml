@@ -1,0 +1,15 @@
+[default]
+description = "Default permissions for the nativeaudio plugin"
+permissions = [
+    "allow-initialize",
+    "allow-play-track",
+    "allow-pause",
+    "allow-resume",
+    "allow-stop",
+    "allow-seek",
+    "allow-set-volume",
+    "allow-set-eq",
+    "allow-set-crossfade",
+    "allow-get-state",
+    "allow-dispose",
+]

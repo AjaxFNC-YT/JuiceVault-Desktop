@@ -2421,6 +2421,144 @@
           "markdownDescription": "Denies the save command without any pre-configured scope."
         },
         {
+          "description": "Default permissions for the nativeaudio plugin\n#### This default permission set includes:\n\n- `allow-initialize`\n- `allow-play-track`\n- `allow-pause`\n- `allow-resume`\n- `allow-stop`\n- `allow-seek`\n- `allow-set-volume`\n- `allow-set-eq`\n- `allow-set-crossfade`\n- `allow-get-state`\n- `allow-dispose`",
+          "type": "string",
+          "const": "nativeaudio:default",
+          "markdownDescription": "Default permissions for the nativeaudio plugin\n#### This default permission set includes:\n\n- `allow-initialize`\n- `allow-play-track`\n- `allow-pause`\n- `allow-resume`\n- `allow-stop`\n- `allow-seek`\n- `allow-set-volume`\n- `allow-set-eq`\n- `allow-set-crossfade`\n- `allow-get-state`\n- `allow-dispose`"
+        },
+        {
+          "description": "Enables the dispose command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:allow-dispose",
+          "markdownDescription": "Enables the dispose command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:allow-get-state",
+          "markdownDescription": "Enables the get_state command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the initialize command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:allow-initialize",
+          "markdownDescription": "Enables the initialize command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pause command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:allow-pause",
+          "markdownDescription": "Enables the pause command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the play_track command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:allow-play-track",
+          "markdownDescription": "Enables the play_track command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the resume command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:allow-resume",
+          "markdownDescription": "Enables the resume command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the seek command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:allow-seek",
+          "markdownDescription": "Enables the seek command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_crossfade command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:allow-set-crossfade",
+          "markdownDescription": "Enables the set_crossfade command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_eq command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:allow-set-eq",
+          "markdownDescription": "Enables the set_eq command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_volume command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:allow-set-volume",
+          "markdownDescription": "Enables the set_volume command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:allow-stop",
+          "markdownDescription": "Enables the stop command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the dispose command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:deny-dispose",
+          "markdownDescription": "Denies the dispose command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:deny-get-state",
+          "markdownDescription": "Denies the get_state command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the initialize command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:deny-initialize",
+          "markdownDescription": "Denies the initialize command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pause command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:deny-pause",
+          "markdownDescription": "Denies the pause command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the play_track command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:deny-play-track",
+          "markdownDescription": "Denies the play_track command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the resume command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:deny-resume",
+          "markdownDescription": "Denies the resume command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the seek command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:deny-seek",
+          "markdownDescription": "Denies the seek command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_crossfade command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:deny-set-crossfade",
+          "markdownDescription": "Denies the set_crossfade command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_eq command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:deny-set-eq",
+          "markdownDescription": "Denies the set_eq command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_volume command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:deny-set-volume",
+          "markdownDescription": "Denies the set_volume command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "nativeaudio:deny-stop",
+          "markdownDescription": "Denies the stop command without any pre-configured scope."
+        },
+        {
           "description": "This permission set configures which\nshell functionality is exposed by default.\n\n#### Granted Permissions\n\nIt allows to use the `open` functionality with a reasonable\nscope pre-configured. It will allow opening `http(s)://`,\n`tel:` and `mailto:` links.\n\n#### This default permission set includes:\n\n- `allow-open`",
           "type": "string",
           "const": "shell:default",
