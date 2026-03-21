@@ -1,6 +1,6 @@
 use tauri::{
     plugin::{PluginApi, PluginHandle},
-    AppHandle, Runtime,
+    AppHandle, Manager, Runtime,
 };
 
 use crate::models::*;

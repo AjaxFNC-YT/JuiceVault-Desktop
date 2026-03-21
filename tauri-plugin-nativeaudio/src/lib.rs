@@ -3,6 +3,9 @@ use tauri::{
     Runtime,
 };
 
+#[cfg(mobile)]
+use tauri::Manager;
+
 mod commands;
 mod error;
 mod models;

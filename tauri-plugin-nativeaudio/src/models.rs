@@ -10,7 +10,7 @@ pub struct AudioState {
     pub volume: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayTrackPayload {
     pub url: String,
@@ -19,19 +19,19 @@ pub struct PlayTrackPayload {
     pub artwork_url: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SeekPayload {
     pub time: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VolumePayload {
     pub volume: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EqPayload {
     pub bass: f64,
@@ -41,7 +41,7 @@ pub struct EqPayload {
     pub gain: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CrossfadePayload {
     pub seconds: f64,
