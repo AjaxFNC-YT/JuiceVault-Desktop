@@ -5,6 +5,8 @@ import { getLikedSongs, fetchSongEras } from "@/lib/api";
 import SongList from "@/components/SongList";
 import FilterBar, { getDefaultSort } from "@/components/FilterBar";
 import { useLocalFiles } from "@/stores/localFilesStore";
+import { useFuzzySearchEnabled } from "@/hooks/useFuzzySearch";
+import { searchCollection } from "@/lib/search";
 
 function Songs({ onInfo, onAddToPlaylist }) {
   const [songs, setSongs] = useState([]);
@@ -16,6 +18,7 @@ function Songs({ onInfo, onAddToPlaylist }) {
   const [eraLoading, setEraLoading] = useState(false);
   const [activeEras, setActiveEras] = useState(new Set());
   const { files: localFiles } = useLocalFiles() || { files: [] };
+  const fuzzySearch = useFuzzySearchEnabled();
 
   useEffect(() => {
     const localMap = new Map(localFiles.map((f) => [f.file_hash, f]));
@@ -56,10 +59,11 @@ function Songs({ onInfo, onAddToPlaylist }) {
   const filtered = useMemo(() => {
     let list = songs;
     if (query.trim()) {
-      const q = query.trim().toLowerCase();
-      list = list.filter((s) =>
-        (s.title || "").toLowerCase().includes(q) ||
-        (s.artist || "").toLowerCase().includes(q)
+      list = searchCollection(
+        list,
+        query,
+        (song) => [song.title, song.artist, song.album, song.file_name, ...(song.alt_names || [])],
+        { fuzzy: fuzzySearch },
       );
     }
     if (activeEras.size > 0) {
@@ -76,7 +80,7 @@ function Songs({ onInfo, onAddToPlaylist }) {
       if (sortBy === "most-played") return (b.play_count || 0) - (a.play_count || 0);
       return 0;
     });
-  }, [songs, sortBy, query, activeEras, eraMap]);
+  }, [songs, sortBy, query, activeEras, eraMap, fuzzySearch]);
 
   const handleEraToggle = (era) => {
     setActiveEras((prev) => {

@@ -1,8 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { X, Music2, Search, Loader2, Heart, AlertCircle } from "lucide-react";
 import { getMyPlaylists, addSongsToPlaylist, removeSongFromPlaylist, likeSong, unlikeSong, getLikedSongs } from "@/lib/api";
 import { useTheme, hexToRgb } from "@/stores/themeStore";
 import { useIsMobile } from "@/hooks/useMobile";
+import { useFuzzySearchEnabled } from "@/hooks/useFuzzySearch";
+import { searchCollection } from "@/lib/search";
 
 const CDN = "https://api.juicevault.xyz";
 
@@ -50,6 +52,7 @@ function AddToPlaylistModal({ song, onClose }) {
   const [likedDone, setLikedDone] = useState(false);
   const [likedCount, setLikedCount] = useState(null);
   const [error, setError] = useState(null);
+  const fuzzySearch = useFuzzySearchEnabled();
 
   useEffect(() => {
     Promise.all([
@@ -66,9 +69,9 @@ function AddToPlaylistModal({ song, onClose }) {
     });
   }, [song.id]);
 
-  const filtered = query.trim()
-    ? playlists.filter((p) => (p.name || "").toLowerCase().includes(query.trim().toLowerCase()))
-    : playlists;
+  const filtered = useMemo(() => (
+    searchCollection(playlists, query, (playlist) => [playlist.name], { fuzzy: fuzzySearch })
+  ), [playlists, query, fuzzySearch]);
 
   const showError = (msg) => {
     setError(msg);

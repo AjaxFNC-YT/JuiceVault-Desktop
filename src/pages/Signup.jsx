@@ -4,8 +4,11 @@ import { Link } from "react-router-dom";
 import { Eye, EyeOff, Loader2, ArrowRight } from "lucide-react";
 import { register as apiRegister } from "@/lib/api";
 import Background from "@/components/Background";
+import { useIsMobile } from "@/hooks/useMobile";
+import { IS_TAURI } from "@/lib/platform";
 
 function Signup({ onAuth }) {
+  const isMobile = useIsMobile();
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
@@ -56,7 +59,7 @@ function Signup({ onAuth }) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="app-viewport relative flex items-center justify-center overflow-hidden"
+      className={`${isMobile || !IS_TAURI ? "app-viewport" : "desktop-safe-viewport"} relative flex items-center justify-center overflow-hidden`}
       style={{ background: "#000000" }}
     >
       <Background />

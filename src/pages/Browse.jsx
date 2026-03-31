@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, Loader2, Compass, Folder, ChevronLeft, Music2 } from "lucide-react";
-import { searchSongs, getAllSongs, fetchSongEras } from "@/lib/api";
+import { getAllSongs, fetchSongEras } from "@/lib/api";
 import SongList from "@/components/SongList";
 import FilterBar, { getDefaultSort } from "@/components/FilterBar";
+import { useFuzzySearchEnabled } from "@/hooks/useFuzzySearch";
+import { searchCollection } from "@/lib/search";
 
 const isSessionEdit = (song) => !!song.is_session_edit;
 
@@ -20,6 +22,7 @@ function Browse({ onInfo, onAddToPlaylist }) {
   const [eraLoading, setEraLoading] = useState(false);
   const [activeEras, setActiveEras] = useState(new Set());
   const mergeSessionEdits = localStorage.getItem("mergeSessionEdits") === "true";
+  const fuzzySearch = useFuzzySearchEnabled();
 
   useEffect(() => {
     getAllSongs().then((res) => {
@@ -39,48 +42,19 @@ function Browse({ onInfo, onAddToPlaylist }) {
     if (!q.trim()) { setResults([]); return; }
     setLoading(true);
     try {
-      const res = await searchSongs(q.trim());
-      const apiResults = res?.results || [];
-
-      const lower = q.trim().toLowerCase();
-      const altMatches = featured.filter((song) => {
-        const alts = song.alt_names || [];
-        return alts.some((name) => name.toLowerCase().includes(lower));
-      });
-
-      const seen = new Set();
-      const all = [];
-      for (const s of [...apiResults, ...altMatches]) {
-        const id = s.id || s._id;
-        if (!seen.has(id)) { seen.add(id); all.push(s); }
-      }
-
-      all.sort((a, b) => {
-        const scoreAlt = (song) => {
-          const alts = (song.alt_names || []).map((n) => n.toLowerCase());
-          if (alts.includes(lower)) return 0;
-          if (alts.some((n) => n.includes(lower))) return 1;
-          return 2;
-        };
-        const scoreTitle = (song) => {
-          const t = (song.title || "").toLowerCase();
-          const ar = (song.artist || "").toLowerCase();
-          if (t === lower || ar === lower) return 0;
-          if (t.includes(lower) || ar.includes(lower)) return 1;
-          return 2;
-        };
-        const sa = Math.min(scoreAlt(a), scoreTitle(a));
-        const sb = Math.min(scoreAlt(b), scoreTitle(b));
-        return sa - sb;
-      });
-
-      setResults(all.filter((s) => s.title));
+      const matched = searchCollection(
+        featured,
+        q,
+        (song) => [song.title, song.artist, song.album, ...(song.alt_names || [])],
+        { fuzzy: fuzzySearch },
+      );
+      setResults(matched.filter((song) => song.title));
     } catch {
       setResults([]);
     } finally {
       setLoading(false);
     }
-  }, [featured]);
+  }, [featured, fuzzySearch]);
 
   useEffect(() => {
     const timer = setTimeout(() => doSearch(query), 300);

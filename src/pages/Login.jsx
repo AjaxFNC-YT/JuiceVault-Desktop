@@ -5,8 +5,11 @@ import { Eye, EyeOff, Loader2, ArrowRight, Bug, X, Copy, Check } from "lucide-re
 import { login as apiLogin } from "@/lib/api";
 import { invoke } from "@tauri-apps/api/core";
 import Background from "@/components/Background";
+import { useIsMobile } from "@/hooks/useMobile";
+import { IS_TAURI } from "@/lib/platform";
 
 function Login({ onAuth }) {
+  const isMobile = useIsMobile();
   const [loginVal, setLoginVal] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -63,7 +66,7 @@ function Login({ onAuth }) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="app-viewport relative flex items-center justify-center overflow-hidden"
+      className={`${isMobile || !IS_TAURI ? "app-viewport" : "desktop-safe-viewport"} relative flex items-center justify-center overflow-hidden`}
       style={{ background: "#000000" }}
     >
       <Background />

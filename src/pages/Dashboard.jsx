@@ -21,6 +21,7 @@ import PlayerPreferencesModal from "@/components/PlayerPreferencesModal";
 import { useDiscordRPC } from "@/hooks/useDiscordRPC";
 import { updateUserPreferences } from "@/lib/api";
 import { useIsMobile } from "@/hooks/useMobile";
+import { IS_TAURI } from "@/lib/platform";
 import { useTheme } from "@/stores/themeStore";
 
 const pageFade = {
@@ -82,7 +83,7 @@ function Dashboard({ user, onLogout }) {
   };
 
   return (
-    <div className={`app-fixed-viewport flex flex-col overflow-hidden ${isMobile ? 'top-0' : 'top-9'}`}>
+    <div className={`${isMobile || !IS_TAURI ? "app-fixed-viewport" : "desktop-safe-fixed-viewport"} flex flex-col overflow-hidden`}>
       <Background />
 
       {isMobile && !sidebarOpen && (

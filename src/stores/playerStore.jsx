@@ -7,6 +7,10 @@ const API = "https://api.juicevault.xyz";
 const IS_IOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 const IS_ANDROID = /Android/i.test(navigator.userAgent);
 const IS_MOBILE = IS_IOS || IS_ANDROID;
+const SHUFFLE_MEMORY_KEY = "player.shuffle.memory.v1";
+const EARLY_SKIP_WINDOW_SECONDS = 10;
+const MAX_SHUFFLE_MEMORY_TRACKS = 750;
+const MAX_SESSION_HISTORY = 250;
 
 function getStreamUrl(track) {
   if (track?.local && track?.path) return convertFileSrc(track.path);
@@ -65,6 +69,7 @@ export function PlayerProvider({ children }) {
 
   const analyserRef = useRef(null);
   const audioCtxRef = useRef(null);
+  const outputGainRef = useRef(null);
   const [analyserReady, setAnalyserReady] = useState(false);
 
   const bassRef = useRef(null);
@@ -78,7 +83,7 @@ export function PlayerProvider({ children }) {
   const loadedEq = useRef((() => {
     try { return JSON.parse(localStorage.getItem("eq") || "{}"); } catch { return {}; }
   })());
-  const crossfadeRef = useRef(parseInt(localStorage.getItem("crossfade") || "0"));
+  const crossfadeRef = useRef(IS_MOBILE ? 0 : parseInt(localStorage.getItem("crossfade") || "0"));
 
   const prefsSaveTimer = useRef(null);
   const savePrefsToApi = useCallback((overrides = {}) => {
@@ -105,11 +110,16 @@ export function PlayerProvider({ children }) {
   }, []);
   const fadeTimerRef = useRef(null);
   const fadeOutAudioRef = useRef(null);
+  const playbackWatchdogRef = useRef(null);
+  const endGuardRef = useRef(false);
+  const stalledNearEndRef = useRef(0);
 
   if (!audioRef.current) {
     audioRef.current = new Audio();
-    audioRef.current.volume = initialState.volume;
+    audioRef.current.volume = 1;
     audioRef.current.crossOrigin = "anonymous";
+    audioRef.current.playbackRate = 1;
+    audioRef.current.defaultPlaybackRate = 1;
   }
 
   const audio = audioRef.current;
@@ -117,6 +127,16 @@ export function PlayerProvider({ children }) {
   const crossfadeActiveRef = useRef(false);
   const preCrossfadeRef = useRef(null);
   const seekSuppressCfRef = useRef(false);
+  const sessionHistoryRef = useRef([]);
+  const shuffleMemoryRef = useRef((() => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(SHUFFLE_MEMORY_KEY) || "{}");
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  })());
+  const shuffleCycleRef = useRef({ signature: "", remainingIndices: [] });
 
   const cancelCrossfade = useCallback(() => {
     if (!crossfadeActiveRef.current) return;
@@ -129,18 +149,274 @@ export function PlayerProvider({ children }) {
     crossfadeActiveRef.current = false;
     const prev = preCrossfadeRef.current;
     if (prev) {
-      audioRef.current.volume = prev.volume;
+      if (outputGainRef.current) outputGainRef.current.gain.value = prev.volume;
+      else audioRef.current.volume = prev.volume;
       dispatch({ type: "SET_TRACK_DIRECT", payload: { track: prev.track, index: prev.index } });
       preCrossfadeRef.current = null;
     }
   }, []);
+
+  const applyDesktopPlaybackState = useCallback((volume = stateRef.current.volume) => {
+    const activeAudio = audioRef.current;
+    activeAudio.playbackRate = 1;
+    activeAudio.defaultPlaybackRate = 1;
+    activeAudio.preservesPitch = true;
+    activeAudio.mozPreservesPitch = true;
+    activeAudio.webkitPreservesPitch = true;
+
+    if (fadeOutAudioRef.current) {
+      fadeOutAudioRef.current.playbackRate = 1;
+      fadeOutAudioRef.current.defaultPlaybackRate = 1;
+      fadeOutAudioRef.current.preservesPitch = true;
+      fadeOutAudioRef.current.mozPreservesPitch = true;
+      fadeOutAudioRef.current.webkitPreservesPitch = true;
+    }
+
+    if (audioCtxRef.current?.state === "suspended") {
+      audioCtxRef.current.resume().catch(() => {});
+    }
+
+    if (outputGainRef.current) outputGainRef.current.gain.value = volume;
+    else activeAudio.volume = volume;
+  }, []);
+
+  const getQueueTrackKey = useCallback((track) => {
+    if (!track) return null;
+    if (track.local && track.path) return `local:${track.path}`;
+    if (track.id != null) return `remote:${track.id}`;
+
+    const title = track.title || "unknown-title";
+    const artist = track.artist || "unknown-artist";
+    const album = track.album || "unknown-album";
+    return `meta:${title}|${artist}|${album}`;
+  }, []);
+
+  const saveShuffleMemory = useCallback(() => {
+    try {
+      const trimmed = Object.fromEntries(
+        Object.entries(shuffleMemoryRef.current)
+          .sort(([, a], [, b]) => (b?.lastPlayedAt || 0) - (a?.lastPlayedAt || 0))
+          .slice(0, MAX_SHUFFLE_MEMORY_TRACKS),
+      );
+
+      shuffleMemoryRef.current = trimmed;
+      localStorage.setItem(SHUFFLE_MEMORY_KEY, JSON.stringify(trimmed));
+    } catch {}
+  }, []);
+
+  const getQueueCurrentIndex = useCallback((snapshot) => {
+    if (snapshot.queueIndex >= 0 && snapshot.queueIndex < snapshot.queue.length) return snapshot.queueIndex;
+
+    const currentKey = getQueueTrackKey(snapshot.currentTrack);
+    if (!currentKey) return -1;
+
+    return snapshot.queue.findIndex((track) => getQueueTrackKey(track) === currentKey);
+  }, [getQueueTrackKey]);
+
+  const pushSessionHistory = useCallback((snapshot) => {
+    if (!snapshot.currentTrack || !snapshot.queue.length) return;
+
+    const entry = {
+      track: snapshot.currentTrack,
+      queue: snapshot.queue,
+      index: getQueueCurrentIndex(snapshot),
+    };
+
+    const lastEntry = sessionHistoryRef.current[sessionHistoryRef.current.length - 1];
+    if (
+      lastEntry &&
+      lastEntry.queue === entry.queue &&
+      lastEntry.index === entry.index &&
+      getQueueTrackKey(lastEntry.track) === getQueueTrackKey(entry.track)
+    ) {
+      return;
+    }
+
+    sessionHistoryRef.current = [
+      ...sessionHistoryRef.current.slice(-(MAX_SESSION_HISTORY - 1)),
+      entry,
+    ];
+  }, [getQueueCurrentIndex, getQueueTrackKey]);
+
+  const recordTrackShuffleOutcome = useCallback((track, snapshot, { completed = false } = {}) => {
+    const key = getQueueTrackKey(track);
+    if (!key) return;
+
+    const elapsedSeconds = Math.max(0, Math.floor(snapshot.progress || audio.currentTime || 0));
+    const durationSeconds = Math.max(0, Number(snapshot.duration || audio.duration || 0));
+    const rewardThreshold = durationSeconds > 0
+      ? Math.min(90, Math.max(30, durationSeconds * 0.35))
+      : 30;
+    const outcome = completed
+      ? "completed"
+      : elapsedSeconds < EARLY_SKIP_WINDOW_SECONDS
+        ? "early-skip"
+        : elapsedSeconds >= rewardThreshold
+          ? "played"
+          : "neutral";
+
+    const current = shuffleMemoryRef.current[key] || {};
+    const now = Date.now();
+    const next = {
+      starts: Number(current.starts) || 0,
+      plays: Number(current.plays) || 0,
+      completions: Number(current.completions) || 0,
+      earlySkips: Number(current.earlySkips) || 0,
+      skipPenalty: Math.max(0, Number(current.skipPenalty) || 0),
+      lastPlayedAt: current.lastPlayedAt || 0,
+      totalSeconds: Number(current.totalSeconds) || 0,
+    };
+
+    next.starts += 1;
+    next.lastPlayedAt = now;
+    next.totalSeconds += elapsedSeconds;
+
+    if (outcome === "completed") {
+      next.plays += 1;
+      next.completions += 1;
+      next.skipPenalty = Math.max(0, next.skipPenalty - 0.75);
+    } else if (outcome === "played") {
+      next.plays += 1;
+      next.skipPenalty = Math.max(0, next.skipPenalty - 0.35);
+    } else if (outcome === "early-skip") {
+      next.earlySkips += 1;
+      next.skipPenalty = Math.min(8, next.skipPenalty + 1);
+    }
+
+    shuffleMemoryRef.current = {
+      ...shuffleMemoryRef.current,
+      [key]: next,
+    };
+    saveShuffleMemory();
+  }, [audio, getQueueTrackKey, saveShuffleMemory]);
+
+  const resetShuffleCycle = useCallback(() => {
+    shuffleCycleRef.current = { signature: "", remainingIndices: [] };
+  }, []);
+
+  const getWeightedShuffleIndex = useCallback((snapshot) => {
+    if (!snapshot.queue.length) return -1;
+
+    const currentIndex = getQueueCurrentIndex(snapshot);
+    if (snapshot.queue.length === 1) return currentIndex >= 0 ? currentIndex : 0;
+
+    const queueSignature = snapshot.queue
+      .map((track, index) => `${index}:${getQueueTrackKey(track) || `unknown-${index}`}`)
+      .join("||");
+
+    if (shuffleCycleRef.current.signature !== queueSignature) {
+      shuffleCycleRef.current = {
+        signature: queueSignature,
+        remainingIndices: snapshot.queue.map((_, index) => index),
+      };
+    }
+
+    shuffleCycleRef.current.remainingIndices = shuffleCycleRef.current.remainingIndices
+      .filter((index) => index >= 0 && index < snapshot.queue.length);
+
+    if (currentIndex >= 0) {
+      shuffleCycleRef.current.remainingIndices = shuffleCycleRef.current.remainingIndices
+        .filter((index) => index !== currentIndex);
+    }
+
+    if (!shuffleCycleRef.current.remainingIndices.length) {
+      shuffleCycleRef.current.remainingIndices = snapshot.queue
+        .map((_, index) => index)
+        .filter((index) => index !== currentIndex);
+    }
+
+    const now = Date.now();
+    const weightedCandidates = shuffleCycleRef.current.remainingIndices.map((index) => {
+      const track = snapshot.queue[index];
+      const key = getQueueTrackKey(track);
+      const stats = key ? shuffleMemoryRef.current[key] || {} : {};
+      const starts = Number(stats.starts) || 0;
+      const plays = Number(stats.plays) || 0;
+      const completions = Number(stats.completions) || 0;
+      const skipPenalty = Math.max(0, Number(stats.skipPenalty) || 0);
+      const lastPlayedAt = Number(stats.lastPlayedAt) || 0;
+      const neverStarted = starts === 0;
+
+      let weight = neverStarted ? 18 : 1.4;
+      weight *= 1 + Math.min(1.75, completions * 0.18 + plays * 0.06);
+      weight *= Math.max(0.04, Math.pow(0.42, skipPenalty));
+
+      if (lastPlayedAt > 0) {
+        const hoursSinceLastPlay = (now - lastPlayedAt) / 3600000;
+        const freshnessFactor = Math.min(1.2, 0.25 + Math.max(0, hoursSinceLastPlay) / 8);
+        weight *= Math.max(0.2, freshnessFactor);
+      } else {
+        weight *= 1.2;
+      }
+
+      return { index, weight: Math.max(0.02, weight) };
+    });
+
+    const totalWeight = weightedCandidates.reduce((sum, candidate) => sum + candidate.weight, 0);
+    if (totalWeight <= 0) return shuffleCycleRef.current.remainingIndices[0] ?? -1;
+
+    let cursor = Math.random() * totalWeight;
+    for (const candidate of weightedCandidates) {
+      cursor -= candidate.weight;
+      if (cursor <= 0) return candidate.index;
+    }
+
+    return weightedCandidates[weightedCandidates.length - 1]?.index ?? -1;
+  }, [getQueueCurrentIndex, getQueueTrackKey]);
+
+  const getNextQueueIndex = useCallback((snapshot) => {
+    if (!snapshot.queue.length) return -1;
+
+    const currentIndex = getQueueCurrentIndex(snapshot);
+
+    if (snapshot.shuffle) {
+      return getWeightedShuffleIndex(snapshot);
+    }
+
+    const startIndex = currentIndex >= 0 ? currentIndex : -1;
+    const nextIdx = startIndex + 1;
+    if (nextIdx >= snapshot.queue.length) {
+      return snapshot.repeat === "all" ? 0 : -1;
+    }
+    return nextIdx;
+  }, [getQueueCurrentIndex, getWeightedShuffleIndex]);
+
+  const finishTrack = useCallback(() => {
+    const snapshot = stateRef.current;
+    if (snapshot.isRadio || endGuardRef.current) return;
+    endGuardRef.current = true;
+    stalledNearEndRef.current = 0;
+
+    if (snapshot.currentTrack) {
+      recordTrackShuffleOutcome(snapshot.currentTrack, snapshot, { completed: true });
+    }
+
+    if (snapshot.currentTrack && !snapshot.currentTrack.local) {
+      const elapsed = Math.floor(audio.currentTime - listenStartRef.current);
+      logListen(snapshot.currentTrack.id, elapsed, true).catch(() => {});
+    }
+
+    if (snapshot.repeat === "one") {
+      audio.currentTime = 0;
+      audio.playbackRate = 1;
+      applyDesktopPlaybackState();
+      audio.play().catch(() => {});
+    } else {
+      skipNextRef.current?.({ recordCurrentOutcome: false });
+    }
+
+    window.setTimeout(() => {
+      endGuardRef.current = false;
+    }, 200);
+  }, [applyDesktopPlaybackState, audio, recordTrackShuffleOutcome]);
 
   const doCrossfade = useCallback((newSrc, targetVolume, overrideDuration) => {
     const a = audioRef.current;
     const cfDuration = overrideDuration ?? crossfadeRef.current;
     if (cfDuration <= 0 || !a.currentSrc) {
       a.src = newSrc;
-      a.volume = targetVolume;
+      a.volume = 1;
+      applyDesktopPlaybackState(targetVolume);
       a.play().catch(() => {});
       return;
     }
@@ -160,12 +436,19 @@ export function PlayerProvider({ children }) {
 
     const fadeIn = new Audio();
     fadeIn.crossOrigin = "anonymous";
+    fadeIn.playbackRate = 1;
+    fadeIn.defaultPlaybackRate = 1;
+    fadeIn.preservesPitch = true;
+    fadeIn.mozPreservesPitch = true;
+    fadeIn.webkitPreservesPitch = true;
     fadeIn.src = newSrc;
     fadeIn.volume = 0;
     fadeIn.play().catch(() => {});
     fadeOutAudioRef.current = fadeIn;
 
-    const startVol = a.paused ? targetVolume : a.volume;
+    const startVol = a.paused
+      ? targetVolume
+      : (outputGainRef.current?.gain.value ?? targetVolume);
     if (!a.paused) {
       const steps = cfDuration * 25;
       const interval = (cfDuration * 1000) / steps;
@@ -174,14 +457,15 @@ export function PlayerProvider({ children }) {
       fadeTimerRef.current = setInterval(() => {
         step++;
         const progress = Math.min(1, step / steps);
-        a.volume = Math.max(0, startVol * (1 - progress));
+        applyDesktopPlaybackState(Math.max(0, startVol * (1 - progress)));
         fadeIn.volume = targetVolume * progress;
         if (step >= steps) {
           clearInterval(fadeTimerRef.current);
           a.pause();
           a.src = newSrc;
           a.currentTime = fadeIn.currentTime;
-          a.volume = targetVolume;
+          a.volume = 1;
+          applyDesktopPlaybackState(targetVolume);
           a.play().catch(() => {});
           fadeIn.pause();
           fadeIn.src = "";
@@ -194,7 +478,8 @@ export function PlayerProvider({ children }) {
       setTimeout(() => {
         a.src = newSrc;
         a.currentTime = fadeIn.currentTime;
-        a.volume = targetVolume;
+        a.volume = 1;
+        applyDesktopPlaybackState(targetVolume);
         a.play().catch(() => {});
         fadeIn.pause();
         fadeIn.src = "";
@@ -202,7 +487,7 @@ export function PlayerProvider({ children }) {
         crossfadeActiveRef.current = false;
       }, 300);
     }
-  }, []);
+  }, [applyDesktopPlaybackState]);
 
   const createImpulse = useCallback((actx, duration = 2, decay = 2.5) => {
     const rate = actx.sampleRate;
@@ -241,6 +526,8 @@ export function PlayerProvider({ children }) {
       const analyser = actx.createAnalyser();
       analyser.fftSize = 256;
       analyser.smoothingTimeConstant = 0.75;
+      const outputGain = actx.createGain();
+      outputGain.gain.value = stateRef.current.volume;
 
       source.connect(bass);
       bass.connect(mid);
@@ -251,7 +538,8 @@ export function PlayerProvider({ children }) {
       gain.connect(convolver);
       convolver.connect(wetGain);
       wetGain.connect(analyser);
-      analyser.connect(actx.destination);
+      analyser.connect(outputGain);
+      outputGain.connect(actx.destination);
 
       bassRef.current = bass;
       midRef.current = mid;
@@ -261,6 +549,7 @@ export function PlayerProvider({ children }) {
       wetGainRef.current = wetGain;
       convolverRef.current = convolver;
       analyserRef.current = analyser;
+      outputGainRef.current = outputGain;
 
       const eq = loadedEq.current;
       if (eq.bass) bass.gain.value = eq.bass;
@@ -295,6 +584,22 @@ export function PlayerProvider({ children }) {
   stateRef.current = state;
 
   const autoCfTriggeredRef = useRef(false);
+  const startTrackPlayback = useCallback((track, queue, index, volume = stateRef.current.volume, crossfadeDuration = 1, replaceQueue = false) => {
+    seekSuppressCfRef.current = false;
+    autoCfTriggeredRef.current = false;
+    endGuardRef.current = false;
+    stalledNearEndRef.current = 0;
+    dispatch({
+      type: replaceQueue ? "PLAY_TRACK" : "SET_TRACK_DIRECT",
+      payload: replaceQueue ? { track, queue, index } : { track, index },
+    });
+    if (IS_MOBILE) nativePlayTrack(track);
+    else {
+      applyDesktopPlaybackState(volume);
+      doCrossfade(getStreamUrl(track), volume, crossfadeDuration);
+    }
+    listenStartRef.current = 0;
+  }, [applyDesktopPlaybackState, doCrossfade, nativePlayTrack]);
 
   useEffect(() => {
     if (IS_MOBILE) return;
@@ -321,27 +626,53 @@ export function PlayerProvider({ children }) {
         autoCfTriggeredRef.current = false;
         return;
       }
-      if (s.currentTrack && !s.currentTrack.local) {
-        const elapsed = Math.floor(audio.currentTime - listenStartRef.current);
-        logListen(s.currentTrack.id, elapsed, true).catch(() => {});
-      }
-      if (s.repeat === "one") {
-        audio.currentTime = 0;
-        audio.play();
-      } else {
-        skipNextRef.current?.();
-      }
+      finishTrack();
+    };
+    const onVisibilityOrFocus = () => {
+      if (document.visibilityState === "hidden") return;
+      applyDesktopPlaybackState();
     };
 
     audio.addEventListener("timeupdate", onTime);
     audio.addEventListener("loadedmetadata", onDuration);
     audio.addEventListener("ended", onEnded);
+    window.addEventListener("focus", onVisibilityOrFocus);
+    window.addEventListener("pageshow", onVisibilityOrFocus);
+    document.addEventListener("visibilitychange", onVisibilityOrFocus);
     return () => {
       audio.removeEventListener("timeupdate", onTime);
       audio.removeEventListener("loadedmetadata", onDuration);
       audio.removeEventListener("ended", onEnded);
+      window.removeEventListener("focus", onVisibilityOrFocus);
+      window.removeEventListener("pageshow", onVisibilityOrFocus);
+      document.removeEventListener("visibilitychange", onVisibilityOrFocus);
     };
-  }, []);
+  }, [applyDesktopPlaybackState, audio, finishTrack]);
+
+  useEffect(() => {
+    if (IS_MOBILE) return undefined;
+    clearInterval(playbackWatchdogRef.current);
+
+    if (!state.isPlaying || state.isRadio || !state.currentTrack) return undefined;
+
+    playbackWatchdogRef.current = setInterval(() => {
+      if (crossfadeActiveRef.current || autoCfTriggeredRef.current || endGuardRef.current) return;
+      if (!audio.duration || Number.isNaN(audio.duration)) return;
+
+      dispatch({ type: "SET_PROGRESS", payload: audio.currentTime });
+
+      const nearEnd = audio.currentTime >= Math.max(0, audio.duration - 0.2);
+      stalledNearEndRef.current = (audio.ended || nearEnd)
+        ? stalledNearEndRef.current + 1
+        : 0;
+
+      if (stalledNearEndRef.current >= 2) {
+        finishTrack();
+      }
+    }, 500);
+
+    return () => clearInterval(playbackWatchdogRef.current);
+  }, [audio, finishTrack, state.currentTrack, state.isPlaying, state.isRadio]);
 
   useEffect(() => {
     if (!IS_MOBILE) return;
@@ -361,9 +692,12 @@ export function PlayerProvider({ children }) {
               logListen(s.currentTrack.id, Math.floor(ns.currentTime || 0), true).catch(() => {});
             }
             if (s.repeat === "one") {
+              if (s.currentTrack) {
+                recordTrackShuffleOutcome(s.currentTrack, s, { completed: true });
+              }
               invoke("plugin:nativeaudio|seek", { time: 0 }).then(() => invoke("plugin:nativeaudio|resume")).catch(() => {});
             } else {
-              skipNextRef.current?.();
+              skipNextRef.current?.({ completedCurrent: true });
             }
           } else if (ns.status === "next") {
             skipNextRef.current?.();
@@ -374,6 +708,7 @@ export function PlayerProvider({ children }) {
             dispatch({ type: "SET_PLAYING", payload: ns.isPlaying });
           }
         });
+        invoke("plugin:nativeaudio|set_crossfade", { seconds: 0 }).catch(() => {});
       } catch (e) { console.warn("[NativeAudio] init failed:", e); }
     };
     init();
@@ -381,18 +716,18 @@ export function PlayerProvider({ children }) {
   }, []);
 
   const playTrack = useCallback((track, queue = [], index = 0) => {
+    if (stateRef.current.currentTrack && getQueueTrackKey(stateRef.current.currentTrack) !== getQueueTrackKey(track)) {
+      recordTrackShuffleOutcome(stateRef.current.currentTrack, stateRef.current);
+      pushSessionHistory(stateRef.current);
+    }
     if (stateRef.current.isRadio) {
       clearInterval(radioPollingRef.current);
       dispatch({ type: "STOP_RADIO" });
     }
+    if (queue !== stateRef.current.queue) resetShuffleCycle();
     if (!IS_MOBILE) ensureAnalyser();
-    seekSuppressCfRef.current = false;
-    autoCfTriggeredRef.current = false;
-    dispatch({ type: "PLAY_TRACK", payload: { track, queue, index } });
-    if (IS_MOBILE) nativePlayTrack(track);
-    else doCrossfade(getStreamUrl(track), stateRef.current.volume, 1);
-    listenStartRef.current = 0;
-  }, [ensureAnalyser, doCrossfade, nativePlayTrack]);
+    startTrackPlayback(track, queue, index, stateRef.current.volume, 1, true);
+  }, [ensureAnalyser, getQueueTrackKey, recordTrackShuffleOutcome, resetShuffleCycle, pushSessionHistory, startTrackPlayback]);
 
   const togglePlay = useCallback(() => {
     if (state.isRadio) {
@@ -404,6 +739,7 @@ export function PlayerProvider({ children }) {
         if (IS_MOBILE) {
           invoke("plugin:nativeaudio|play_track", { url: `${API}/radio/stream`, title: "JuiceVault Radio", artist: "Live" }).catch(() => {});
         } else {
+          applyDesktopPlaybackState();
           audio.src = `${API}/radio/stream`;
           audio.play().catch(() => {});
         }
@@ -419,10 +755,13 @@ export function PlayerProvider({ children }) {
       dispatch({ type: "SET_PLAYING", payload: false });
     } else {
       if (IS_MOBILE) invoke("plugin:nativeaudio|resume").catch(() => {});
-      else audio.play().catch(() => {});
+      else {
+        applyDesktopPlaybackState();
+        audio.play().catch(() => {});
+      }
       dispatch({ type: "SET_PLAYING", payload: true });
     }
-  }, [state.currentTrack, state.isPlaying, state.isRadio, cancelCrossfade]);
+  }, [state.currentTrack, state.isPlaying, state.isRadio, cancelCrossfade, applyDesktopPlaybackState]);
 
   const seekVolRef = useRef(null);
 
@@ -434,16 +773,18 @@ export function PlayerProvider({ children }) {
 
   const startSeek = useCallback(() => {
     if (IS_MOBILE) return;
-    seekVolRef.current = audio.volume;
-    audio.volume = 0;
-  }, []);
+    seekVolRef.current = outputGainRef.current?.gain.value ?? state.volume;
+    if (outputGainRef.current) outputGainRef.current.gain.value = 0;
+    else audio.volume = 0;
+  }, [audio, state.volume]);
 
   const endSeek = useCallback((time) => {
     if (IS_MOBILE) {
       invoke("plugin:nativeaudio|seek", { time }).catch(() => {});
     } else {
       audio.currentTime = time;
-      audio.volume = seekVolRef.current ?? state.volume;
+      if (outputGainRef.current) outputGainRef.current.gain.value = seekVolRef.current ?? state.volume;
+      else audio.volume = seekVolRef.current ?? state.volume;
       seekVolRef.current = null;
     }
     dispatch({ type: "SET_PROGRESS", payload: time });
@@ -452,53 +793,46 @@ export function PlayerProvider({ children }) {
 
   const setVolume = useCallback((v) => {
     if (IS_MOBILE) invoke("plugin:nativeaudio|set_volume", { volume: v }).catch(() => {});
-    else audio.volume = v;
+    else {
+      if (outputGainRef.current) outputGainRef.current.gain.value = v;
+      else audio.volume = v;
+      if (fadeOutAudioRef.current) fadeOutAudioRef.current.volume = v;
+    }
     dispatch({ type: "SET_VOLUME", payload: v });
-  }, []);
+  }, [audio]);
 
-  const skipNext = useCallback(() => {
-    if (!state.queue.length) return;
-    let nextIdx;
-    if (state.shuffle) {
-      nextIdx = Math.floor(Math.random() * state.queue.length);
-    } else {
-      nextIdx = state.queueIndex + 1;
-      if (nextIdx >= state.queue.length) {
-        if (state.repeat === "all") nextIdx = 0;
-        else { dispatch({ type: "SET_PLAYING", payload: false }); return; }
-      }
+  const skipNext = useCallback(({ recordCurrentOutcome = true, completedCurrent = false } = {}) => {
+    if (recordCurrentOutcome && state.currentTrack) {
+      recordTrackShuffleOutcome(state.currentTrack, state, { completed: completedCurrent });
+    }
+    if (state.currentTrack) pushSessionHistory(state);
+    const nextIdx = getNextQueueIndex(state);
+    if (nextIdx < 0) {
+      dispatch({ type: "SET_PLAYING", payload: false });
+      endGuardRef.current = false;
+      return;
     }
     const track = state.queue[nextIdx];
-    seekSuppressCfRef.current = false;
-    autoCfTriggeredRef.current = false;
-    dispatch({ type: "SET_TRACK_DIRECT", payload: { track, index: nextIdx } });
-    if (IS_MOBILE) nativePlayTrack(track);
-    else doCrossfade(getStreamUrl(track), state.volume, 1);
-    listenStartRef.current = 0;
-  }, [state.queue, state.queueIndex, state.shuffle, state.repeat, state.volume, doCrossfade, nativePlayTrack]);
+    startTrackPlayback(track, state.queue, nextIdx, state.volume, 1);
+  }, [state, getNextQueueIndex, recordTrackShuffleOutcome, pushSessionHistory, startTrackPlayback]);
 
   skipNextRef.current = skipNext;
 
   const autoAdvanceNext = useCallback(() => {
     const s = stateRef.current;
-    if (!s.queue.length) return;
-    let nextIdx;
-    if (s.shuffle) {
-      nextIdx = Math.floor(Math.random() * s.queue.length);
-    } else {
-      nextIdx = s.queueIndex + 1;
-      if (nextIdx >= s.queue.length) {
-        if (s.repeat === "all") nextIdx = 0;
-        else { dispatch({ type: "SET_PLAYING", payload: false }); return; }
-      }
+    if (s.currentTrack) {
+      recordTrackShuffleOutcome(s.currentTrack, s, { completed: true });
+      pushSessionHistory(s);
+    }
+    const nextIdx = getNextQueueIndex(s);
+    if (nextIdx < 0) {
+      dispatch({ type: "SET_PLAYING", payload: false });
+      endGuardRef.current = false;
+      return;
     }
     const track = s.queue[nextIdx];
-    seekSuppressCfRef.current = false;
-    dispatch({ type: "SET_TRACK_DIRECT", payload: { track, index: nextIdx } });
-    if (IS_MOBILE) nativePlayTrack(track);
-    else doCrossfade(getStreamUrl(track), s.volume);
-    listenStartRef.current = 0;
-  }, [doCrossfade, nativePlayTrack]);
+    startTrackPlayback(track, s.queue, nextIdx, s.volume);
+  }, [getNextQueueIndex, recordTrackShuffleOutcome, pushSessionHistory, startTrackPlayback]);
 
   const autoAdvanceRef = useRef(autoAdvanceNext);
   autoAdvanceRef.current = autoAdvanceNext;
@@ -509,24 +843,35 @@ export function PlayerProvider({ children }) {
     } else {
       if (audio.currentTime > 3) { audio.currentTime = 0; return; }
     }
+    const previousEntry = sessionHistoryRef.current.pop();
+    if (previousEntry?.track) {
+      if (state.currentTrack) {
+        recordTrackShuffleOutcome(state.currentTrack, state);
+      }
+      const previousQueue = Array.isArray(previousEntry.queue) ? previousEntry.queue : state.queue;
+      const previousIndex = previousEntry.index >= 0
+        ? previousEntry.index
+        : previousQueue.findIndex((track) => getQueueTrackKey(track) === getQueueTrackKey(previousEntry.track));
+      startTrackPlayback(previousEntry.track, previousQueue, previousIndex >= 0 ? previousIndex : 0, state.volume, 1, previousQueue !== state.queue);
+      return;
+    }
     if (!state.queue.length) return;
+    if (state.currentTrack) {
+      recordTrackShuffleOutcome(state.currentTrack, state);
+    }
     let prevIdx = state.queueIndex - 1;
     if (prevIdx < 0) prevIdx = state.repeat === "all" ? state.queue.length - 1 : 0;
     const track = state.queue[prevIdx];
-    seekSuppressCfRef.current = false;
-    autoCfTriggeredRef.current = false;
-    dispatch({ type: "SET_TRACK_DIRECT", payload: { track, index: prevIdx } });
-    if (IS_MOBILE) nativePlayTrack(track);
-    else doCrossfade(getStreamUrl(track), state.volume, 1);
-    listenStartRef.current = 0;
-  }, [state.queue, state.queueIndex, state.repeat, state.volume, doCrossfade, nativePlayTrack]);
+    startTrackPlayback(track, state.queue, prevIdx, state.volume, 1);
+  }, [state, audio, recordTrackShuffleOutcome, getQueueTrackKey, startTrackPlayback]);
 
   skipPrevRef.current = skipPrev;
 
   const toggleShuffle = useCallback(() => {
+    resetShuffleCycle();
     dispatch({ type: "TOGGLE_SHUFFLE" });
     setTimeout(() => savePrefsToApi({ shuffle: stateRef.current.shuffle }), 0);
-  }, [savePrefsToApi]);
+  }, [resetShuffleCycle, savePrefsToApi]);
   const cycleRepeat = useCallback(() => {
     dispatch({ type: "CYCLE_REPEAT" });
     setTimeout(() => {
@@ -554,6 +899,7 @@ export function PlayerProvider({ children }) {
     if (IS_MOBILE) {
       invoke("plugin:nativeaudio|play_track", { url: `${API}/radio/stream`, title: "JuiceVault Radio", artist: "Live" }).catch(() => {});
     } else {
+      applyDesktopPlaybackState();
       audio.src = `${API}/radio/stream`;
       audio.play().catch(() => {});
     }
@@ -579,7 +925,7 @@ export function PlayerProvider({ children }) {
     startRadioTick();
     clearInterval(radioPollingRef.current);
     radioPollingRef.current = setInterval(poll, 5000);
-  }, [startRadioTick, ensureAnalyser]);
+  }, [startRadioTick, ensureAnalyser, applyDesktopPlaybackState]);
 
   const refreshRadio = useCallback(async () => {
     if (!stateRef.current.isRadio) return;
@@ -636,7 +982,11 @@ export function PlayerProvider({ children }) {
   useEffect(() => {
     if (IS_MOBILE || !("mediaSession" in navigator)) return;
     const ms = navigator.mediaSession;
-    ms.setActionHandler("play", () => { audio.play().catch(() => {}); dispatch({ type: "SET_PLAYING", payload: true }); });
+    ms.setActionHandler("play", () => {
+      applyDesktopPlaybackState();
+      audio.play().catch(() => {});
+      dispatch({ type: "SET_PLAYING", payload: true });
+    });
     ms.setActionHandler("pause", () => { audio.pause(); dispatch({ type: "SET_PLAYING", payload: false }); });
     ms.setActionHandler("previoustrack", () => skipNextRef.current && skipPrev());
     ms.setActionHandler("nexttrack", () => skipNextRef.current?.());
@@ -648,7 +998,7 @@ export function PlayerProvider({ children }) {
       ms.setActionHandler("nexttrack", null);
       try { ms.setActionHandler("seekto", null); } catch {}
     };
-  }, [skipPrev]);
+  }, [applyDesktopPlaybackState, audio, skipPrev]);
 
   useEffect(() => {
     const loadPrefs = async () => {
@@ -678,7 +1028,7 @@ export function PlayerProvider({ children }) {
           }
         }
 
-        if (prefs.crossfadeDuration != null) {
+        if (prefs.crossfadeDuration != null && !IS_MOBILE) {
           crossfadeRef.current = prefs.crossfadeDuration;
           localStorage.setItem("crossfade", String(prefs.crossfadeDuration));
         }
@@ -728,13 +1078,18 @@ export function PlayerProvider({ children }) {
   const getEQ = useCallback(() => loadedEq.current, []);
 
   const setCrossfade = useCallback((seconds) => {
+    if (IS_MOBILE) {
+      crossfadeRef.current = 0;
+      localStorage.setItem("crossfade", "0");
+      invoke("plugin:nativeaudio|set_crossfade", { seconds: 0 }).catch(() => {});
+      return;
+    }
     crossfadeRef.current = seconds;
     localStorage.setItem("crossfade", String(seconds));
-    if (IS_MOBILE) invoke("plugin:nativeaudio|set_crossfade", { seconds }).catch(() => {});
     savePrefsToApi({ crossfadeDuration: seconds });
   }, [savePrefsToApi]);
 
-  const getCrossfade = useCallback(() => crossfadeRef.current, []);
+  const getCrossfade = useCallback(() => (IS_MOBILE ? 0 : crossfadeRef.current), []);
 
   const value = {
     state,

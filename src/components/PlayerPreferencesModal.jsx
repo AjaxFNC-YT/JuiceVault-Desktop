@@ -175,29 +175,31 @@ function PlayerPreferencesModal({ onClose }) {
             ))}
           </div>
 
-          <div className="mt-6 pt-5 border-t border-white/[0.06]">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-white/25 mb-3">Crossfade</p>
-            <div className="flex items-center gap-4">
-              <span className="text-[12px] text-white/40 min-w-[28px]">Off</span>
-              <input
-                type="range"
-                min={0}
-                max={12}
-                step={1}
-                value={crossfade}
-                onChange={handleCrossfadeChange}
-                className="flex-1 h-1 rounded-full appearance-none cursor-pointer"
-                style={{
-                  background: `linear-gradient(to right, ${theme.accent[0]} ${(crossfade / 12) * 100}%, rgba(255,255,255,0.1) ${(crossfade / 12) * 100}%)`,
-                  accentColor: theme.accent[0],
-                }}
-              />
-              <span className="text-[12px] text-white/40 min-w-[28px] text-right">12s</span>
+          {!isMobile && (
+            <div className="mt-6 pt-5 border-t border-white/[0.06]">
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-white/25 mb-3">Crossfade</p>
+              <div className="flex items-center gap-4">
+                <span className="text-[12px] text-white/40 min-w-[28px]">Off</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={12}
+                  step={1}
+                  value={crossfade}
+                  onChange={handleCrossfadeChange}
+                  className="flex-1 h-1 rounded-full appearance-none cursor-pointer"
+                  style={{
+                    background: `linear-gradient(to right, ${theme.accent[0]} ${(crossfade / 12) * 100}%, rgba(255,255,255,0.1) ${(crossfade / 12) * 100}%)`,
+                    accentColor: theme.accent[0],
+                  }}
+                />
+                <span className="text-[12px] text-white/40 min-w-[28px] text-right">12s</span>
+              </div>
+              <p className="text-[11px] text-white/25 mt-1.5 text-center">
+                {crossfade === 0 ? "Crossfade disabled" : `${crossfade} second${crossfade !== 1 ? "s" : ""} crossfade`}
+              </p>
             </div>
-            <p className="text-[11px] text-white/25 mt-1.5 text-center">
-              {crossfade === 0 ? "Crossfade disabled" : `${crossfade} second${crossfade !== 1 ? "s" : ""} crossfade`}
-            </p>
-          </div>
+          )}
         </div>
       </motion.div>
     </motion.div>

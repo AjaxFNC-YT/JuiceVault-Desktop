@@ -6,6 +6,8 @@ import { useLocalFiles } from "@/stores/localFilesStore";
 import { open } from "@tauri-apps/plugin-dialog";
 import { updateUserPreferences } from "@/lib/api";
 import { useIsMobile } from "@/hooks/useMobile";
+import { getTitlebarStyle, setTitlebarStyle, IS_TAURI } from "@/lib/platform";
+import { getFuzzySearchEnabled, setFuzzySearchEnabled } from "@/lib/search";
 
 function Toggle({ on, onToggle, color = "bg-brand-red" }) {
   return (
@@ -25,12 +27,20 @@ function SettingsModal({ onClose, discordRpc, setDiscordRpc, onOpenPlayerPrefs }
   const a1 = hexToRgb(theme.accent[1]);
   const { enabled: localEnabled, sources, scanning, scanProgress, setEnabled: setLocalEnabled, addSource, removeSource, scanAllSources } = useLocalFiles();
   const [mergeSE, setMergeSE] = useState(localStorage.getItem("mergeSessionEdits") === "true");
+  const [titlebarStyle, setTitlebarStyleState] = useState(getTitlebarStyle());
+  const [fuzzySearch, setFuzzySearchState] = useState(getFuzzySearchEnabled());
 
   const handleAddSource = async () => {
     try {
       const selected = await open({ directory: true, multiple: false, title: "Select Music Folder" });
       if (selected) addSource(selected);
     } catch {}
+  };
+
+  const handleTitlebarStyleChange = (style) => {
+    setTitlebarStyleState(style);
+    setTitlebarStyle(style);
+    updateUserPreferences({ titlebarStyle: style }).catch(() => {});
   };
 
   return (
@@ -105,12 +115,37 @@ function SettingsModal({ onClose, discordRpc, setDiscordRpc, onOpenPlayerPrefs }
                 <SlidersHorizontal size={18} className="text-white/40" />
                 <div className="text-left">
                   <p className="text-[13px] font-medium text-white/80">Player Preferences</p>
-                  <p className="text-[11px] text-white/30">Equalizer, crossfade & audio settings</p>
+                  <p className="text-[11px] text-white/30">{isMobile ? "Equalizer & audio settings" : "Equalizer, crossfade & audio settings"}</p>
                 </div>
               </div>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/20"><path d="M9 18l6-6-6-6" /></svg>
             </button>
           </section>
+
+          {IS_TAURI && !isMobile && (
+            <section>
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-white/25 mb-3">Window</p>
+              <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-2 flex gap-2">
+                {[
+                  { id: "windows", label: "Windows", hint: "Right-side controls" },
+                  { id: "macos", label: "macOS", hint: "Traffic lights on left" },
+                ].map((option) => {
+                  const active = titlebarStyle === option.id;
+                  return (
+                    <button
+                      key={option.id}
+                      onClick={() => handleTitlebarStyleChange(option.id)}
+                      className="flex-1 rounded-lg px-3 py-2.5 text-left transition-colors"
+                      style={active ? { background: `rgba(${a1}, 0.12)`, boxShadow: `0 0 0 1px rgba(${a1}, 0.18) inset` } : undefined}
+                    >
+                      <p className={`text-[13px] font-medium ${active ? "text-white" : "text-white/65"}`}>{option.label}</p>
+                      <p className="text-[11px] text-white/30 mt-0.5">{option.hint}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          )}
 
           <section>
             <p className="text-[11px] font-semibold uppercase tracking-widest text-white/25 mb-3">Local Files</p>
@@ -186,15 +221,36 @@ function SettingsModal({ onClose, discordRpc, setDiscordRpc, onOpenPlayerPrefs }
 
           <section>
             <p className="text-[11px] font-semibold uppercase tracking-widest text-white/25 mb-3">Browse</p>
-            <div className="flex items-center justify-between rounded-xl bg-white/[0.03] border border-white/[0.06] px-4 py-3">
-              <div className="flex items-center gap-3">
-                <FolderSync size={18} className="text-amber-400/60 flex-shrink-0" />
-                <div>
-                  <p className="text-[13px] font-medium text-white/80">Merge Session Edits</p>
-                  <p className="text-[11px] text-white/30">Show session edits inline instead of a folder</p>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between rounded-xl bg-white/[0.03] border border-white/[0.06] px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <FolderSync size={18} className="text-amber-400/60 flex-shrink-0" />
+                  <div>
+                    <p className="text-[13px] font-medium text-white/80">Merge Session Edits</p>
+                    <p className="text-[11px] text-white/30">Show session edits inline instead of a folder</p>
+                  </div>
                 </div>
+                <Toggle on={mergeSE} onToggle={() => { const v = !mergeSE; setMergeSE(v); localStorage.setItem("mergeSessionEdits", String(v)); updateUserPreferences({ mergeSessionEdits: v }).catch(() => {}); }} color="bg-amber-500" />
               </div>
-              <Toggle on={mergeSE} onToggle={() => { const v = !mergeSE; setMergeSE(v); localStorage.setItem("mergeSessionEdits", String(v)); updateUserPreferences({ mergeSessionEdits: v }).catch(() => {}); }} color="bg-amber-500" />
+
+              <div className="flex items-center justify-between rounded-xl bg-white/[0.03] border border-white/[0.06] px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <SlidersHorizontal size={18} className="text-sky-400/60 flex-shrink-0" />
+                  <div>
+                    <p className="text-[13px] font-medium text-white/80">Fuzzy Search</p>
+                    <p className="text-[11px] text-white/30">Match spacing, punctuation, plurals, and close spellings</p>
+                  </div>
+                </div>
+                <Toggle
+                  on={fuzzySearch}
+                  onToggle={() => {
+                    const next = !fuzzySearch;
+                    setFuzzySearchState(next);
+                    setFuzzySearchEnabled(next);
+                  }}
+                  color="bg-sky-500"
+                />
+              </div>
             </div>
           </section>
 

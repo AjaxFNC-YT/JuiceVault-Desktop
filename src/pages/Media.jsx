@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Film, Play, LayoutGrid, List, Search, Image, Video } from "lucide-react";
 import { getAllMedia } from "@/lib/api";
 import MediaViewer from "@/components/MediaViewer";
+import { useFuzzySearchEnabled } from "@/hooks/useFuzzySearch";
+import { searchCollection } from "@/lib/search";
 
 const TYPE_FILTERS = [
   { key: "all", label: "All", icon: Film },
@@ -31,6 +33,7 @@ function Media({ onMediaView }) {
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [viewing, setViewing] = useState(null);
+  const fuzzySearch = useFuzzySearchEnabled();
 
   useEffect(() => {
     if (viewing) {
@@ -55,11 +58,15 @@ function Media({ onMediaView }) {
     if (typeFilter === "video") list = list.filter((m) => m.type?.startsWith("video/"));
     else if (typeFilter === "image") list = list.filter((m) => m.type?.startsWith("image/"));
     if (query.trim()) {
-      const q = query.trim().toLowerCase();
-      list = list.filter((m) => (m.title || m.file_name || "").toLowerCase().includes(q));
+      list = searchCollection(
+        list,
+        query,
+        (item) => [item.title, item.file_name, item.type],
+        { fuzzy: fuzzySearch },
+      );
     }
     return list;
-  }, [media, typeFilter, query]);
+  }, [media, typeFilter, query, fuzzySearch]);
 
   useEffect(() => { setCardLimit(CARD_BATCH); }, [filtered, viewMode]);
 

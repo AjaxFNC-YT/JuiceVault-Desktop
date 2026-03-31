@@ -6,6 +6,8 @@ import { usePlayer } from "@/stores/playerStore";
 import { useTheme } from "@/stores/themeStore";
 import SongContextMenu from "@/components/SongContextMenu";
 import FilterBar, { getDefaultSort } from "@/components/FilterBar";
+import { useFuzzySearchEnabled } from "@/hooks/useFuzzySearch";
+import { searchCollection } from "@/lib/search";
 
 const CDN = "https://api.juicevault.xyz";
 
@@ -26,6 +28,7 @@ function PlaylistView({ playlistId, playlistName, onBack, onInfo, onAddToPlaylis
   const [eraLoading, setEraLoading] = useState(false);
   const [activeEras, setActiveEras] = useState(new Set());
   const { playTrack } = usePlayer();
+  const fuzzySearch = useFuzzySearchEnabled();
 
   useEffect(() => {
     if (!playlistId) return;
@@ -76,10 +79,11 @@ function PlaylistView({ playlistId, playlistName, onBack, onInfo, onAddToPlaylis
   const songs = useMemo(() => {
     let list = rawSongs;
     if (query.trim()) {
-      const q = query.trim().toLowerCase();
-      list = list.filter((s) =>
-        (s.title || "").toLowerCase().includes(q) ||
-        (s.artist || "").toLowerCase().includes(q)
+      list = searchCollection(
+        list,
+        query,
+        (song) => [song.title, song.artist, song.album, ...(song.alt_names || [])],
+        { fuzzy: fuzzySearch },
       );
     }
     if (activeEras.size > 0) {
@@ -96,7 +100,7 @@ function PlaylistView({ playlistId, playlistName, onBack, onInfo, onAddToPlaylis
       if (sortBy === "most-played") return (b.play_count || 0) - (a.play_count || 0);
       return 0;
     });
-  }, [rawSongs, query, sortBy, activeEras, eraMap]);
+  }, [rawSongs, query, sortBy, activeEras, eraMap, fuzzySearch]);
 
   const handlePlay = (song, idx) => playTrack(song, songs, idx);
 
@@ -335,26 +339,28 @@ function PlaylistView({ playlistId, playlistName, onBack, onInfo, onAddToPlaylis
             const cover = song.cover ? `${CDN}${song.cover}` : null;
             return (
               <div key={song.id} className="group flex items-center gap-3 rounded-md px-3 py-2 hover:bg-white/[0.05]">
-                <button onClick={() => handlePlay(song, i)} className="w-6 text-center flex-shrink-0">
-                  <span className="text-[12px] text-white/20 group-hover:hidden">{i + 1}</span>
-                  <span className="hidden group-hover:block">
-                    <Play size={12} className="text-white mx-auto" fill="white" />
+                <button onClick={() => handlePlay(song, i)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+                  <span className="w-6 text-center flex-shrink-0">
+                    <span className="text-[12px] text-white/20 group-hover:hidden">{i + 1}</span>
+                    <span className="hidden group-hover:block">
+                      <Play size={12} className="text-white mx-auto" fill="white" />
+                    </span>
                   </span>
+                  <div className="h-9 w-9 rounded bg-white/[0.06] overflow-hidden flex-shrink-0">
+                    {cover ? (
+                      <img src={cover} alt="" className="h-full w-full object-cover" loading="lazy" />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center">
+                        <Music2 size={12} className="text-white/20" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-medium text-white/80">{song.title}</p>
+                    <p className="truncate text-[11px] text-white/30">{song.artist}</p>
+                  </div>
+                  <span className="text-[12px] text-white/20 flex-shrink-0">{song.length}</span>
                 </button>
-                <div className="h-9 w-9 rounded bg-white/[0.06] overflow-hidden flex-shrink-0">
-                  {cover ? (
-                    <img src={cover} alt="" className="h-full w-full object-cover" loading="lazy" />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center">
-                      <Music2 size={12} className="text-white/20" />
-                    </div>
-                  )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13px] font-medium text-white/80">{song.title}</p>
-                  <p className="truncate text-[11px] text-white/30">{song.artist}</p>
-                </div>
-                <span className="text-[12px] text-white/20 flex-shrink-0">{song.length}</span>
                 <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 flex-shrink-0 ml-2">
                   <SongContextMenu song={song} onInfo={onInfo} onAddToPlaylist={onAddToPlaylist} />
                   <button

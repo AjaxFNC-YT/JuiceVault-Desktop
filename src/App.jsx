@@ -6,6 +6,7 @@ import Dashboard from "@/pages/Dashboard";
 import TitleBar from "@/components/TitleBar";
 import UpdateModal from "@/components/UpdateModal";
 import { refreshAuth, login as apiLogin, getCurrentUser, checkForUpdate } from "@/lib/api";
+import { getDefaultTitlebarStyle } from "@/lib/platform";
 import { LocalFilesProvider } from "@/stores/localFilesStore";
 
 function App() {
@@ -84,8 +85,17 @@ function App() {
           if (prefs.sortBy) localStorage.setItem("sortBy", prefs.sortBy);
           if (prefs.localFilesEnabled != null) localStorage.setItem("localFilesEnabled", JSON.stringify(prefs.localFilesEnabled));
           if (prefs.localFilesSources != null) localStorage.setItem("localFilesSources", JSON.stringify(prefs.localFilesSources));
+          if (prefs.titlebarStyle) {
+            localStorage.setItem("titlebarStyle", prefs.titlebarStyle);
+            window.dispatchEvent(new Event("titlebar-style-sync"));
+          }
         }
       } catch {}
+
+      if (!localStorage.getItem("titlebarStyle")) {
+        localStorage.setItem("titlebarStyle", getDefaultTitlebarStyle());
+        window.dispatchEvent(new Event("titlebar-style-sync"));
+      }
 
       setUser(parsed);
       setLoading(false);

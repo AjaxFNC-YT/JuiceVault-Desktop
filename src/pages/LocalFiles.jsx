@@ -4,23 +4,25 @@ import { HardDrive, Search, RefreshCw, Music2, FolderOpen } from "lucide-react";
 import { useLocalFiles } from "@/stores/localFilesStore";
 import { usePlayer } from "@/stores/playerStore";
 import SongList from "@/components/SongList";
+import { useFuzzySearchEnabled } from "@/hooks/useFuzzySearch";
+import { searchCollection } from "@/lib/search";
 
 function LocalFiles({ onInfo, onAddToPlaylist }) {
   const { enabled, files, scanning, scanProgress, scanAllSources, sources } = useLocalFiles();
   const { playTrack } = usePlayer();
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState("list");
+  const fuzzySearch = useFuzzySearchEnabled();
 
   const filtered = useMemo(() => {
     if (!query.trim()) return files;
-    const q = query.toLowerCase();
-    return files.filter((f) =>
-      f.title?.toLowerCase().includes(q) ||
-      f.artist?.toLowerCase().includes(q) ||
-      f.album?.toLowerCase().includes(q) ||
-      f.file_name?.toLowerCase().includes(q)
+    return searchCollection(
+      files,
+      query,
+      (file) => [file.title, file.artist, file.album, file.file_name],
+      { fuzzy: fuzzySearch },
     );
-  }, [files, query]);
+  }, [files, query, fuzzySearch]);
 
   if (!enabled) {
     return (

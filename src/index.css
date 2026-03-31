@@ -4,6 +4,7 @@
 
 :root {
   --app-height: 100vh;
+  --desktop-titlebar-height: 36px;
 }
 
 * {
@@ -52,6 +53,21 @@ body {
   width: 100%;
   height: var(--app-height);
   min-height: var(--app-height);
+}
+
+.desktop-safe-viewport {
+  width: 100%;
+  height: calc(var(--app-height) - var(--desktop-titlebar-height));
+  min-height: calc(var(--app-height) - var(--desktop-titlebar-height));
+  margin-top: var(--desktop-titlebar-height);
+}
+
+.desktop-safe-fixed-viewport {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: var(--desktop-titlebar-height);
 }
 
 ::-webkit-scrollbar {
