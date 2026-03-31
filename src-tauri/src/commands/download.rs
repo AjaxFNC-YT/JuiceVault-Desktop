@@ -1,6 +1,5 @@
 use tauri_plugin_dialog::DialogExt;
-
-const BASE_URL: &str = "https://api.juicevault.xyz";
+use crate::services::api::ApiClient;
 
 #[tauri::command]
 pub async fn download_file(
@@ -19,20 +18,11 @@ pub async fn download_file(
         None => return Ok("cancelled".to_string()),
     };
 
-    let full_url = format!("{}{}", BASE_URL, url_path);
-
-    let response = reqwest::get(&full_url)
+    let client = ApiClient::new();
+    let bytes = client
+        .public_get_bytes(&url_path)
         .await
         .map_err(|e| format!("Download failed: {}", e))?;
-
-    if !response.status().is_success() {
-        return Err(format!("Server returned {}", response.status()));
-    }
-
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read response: {}", e))?;
 
     std::fs::write(file_path.as_path().unwrap(), &bytes)
         .map_err(|e| format!("Failed to save file: {}", e))?;

@@ -14,6 +14,24 @@ function App() {
   const [updateInfo, setUpdateInfo] = useState(null);
 
   useEffect(() => {
+    const applyAppHeight = () => {
+      const viewportHeight = window.visualViewport?.height || window.innerHeight;
+      document.documentElement.style.setProperty("--app-height", `${viewportHeight}px`);
+    };
+
+    applyAppHeight();
+    window.addEventListener("resize", applyAppHeight);
+    window.addEventListener("orientationchange", applyAppHeight);
+    window.visualViewport?.addEventListener("resize", applyAppHeight);
+
+    return () => {
+      window.removeEventListener("resize", applyAppHeight);
+      window.removeEventListener("orientationchange", applyAppHeight);
+      window.visualViewport?.removeEventListener("resize", applyAppHeight);
+    };
+  }, []);
+
+  useEffect(() => {
     const init = async () => {
       const storedRefresh = localStorage.getItem("refreshToken");
       const storedUser = localStorage.getItem("user");

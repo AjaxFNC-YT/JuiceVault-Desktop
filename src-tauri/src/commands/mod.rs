@@ -13,3 +13,4 @@ pub mod stats;
 pub mod updater;
 pub mod eras;
 pub mod cover_upload;
+pub mod debug;

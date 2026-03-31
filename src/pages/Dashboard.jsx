@@ -82,7 +82,7 @@ function Dashboard({ user, onLogout }) {
   };
 
   return (
-    <div className={`fixed inset-0 flex flex-col overflow-hidden ${isMobile ? 'top-0' : 'top-9'}`}>
+    <div className={`app-fixed-viewport flex flex-col overflow-hidden ${isMobile ? 'top-0' : 'top-9'}`}>
       <Background />
 
       {isMobile && !sidebarOpen && (

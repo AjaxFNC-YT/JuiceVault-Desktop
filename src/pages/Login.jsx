@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
-import { Eye, EyeOff, Loader2, ArrowRight } from "lucide-react";
+import { Eye, EyeOff, Loader2, ArrowRight, Bug, X, Copy, Check } from "lucide-react";
 import { login as apiLogin } from "@/lib/api";
+import { invoke } from "@tauri-apps/api/core";
 import Background from "@/components/Background";
 
 function Login({ onAuth }) {
@@ -11,6 +12,29 @@ function Login({ onAuth }) {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [debugLog, setDebugLog] = useState(null);
+  const [debugLoading, setDebugLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const runDebug = async () => {
+    setDebugLoading(true);
+    try {
+      const result = await invoke("debug_network");
+      setDebugLog(result);
+    } catch (err) {
+      setDebugLog("Debug command failed: " + (typeof err === "string" ? err : err.message || JSON.stringify(err)));
+    } finally {
+      setDebugLoading(false);
+    }
+  };
+
+  const copyDebug = () => {
+    if (debugLog) {
+      navigator.clipboard.writeText(debugLog);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -39,7 +63,7 @@ function Login({ onAuth }) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="relative flex h-screen w-screen items-center justify-center overflow-hidden"
+      className="app-viewport relative flex items-center justify-center overflow-hidden"
       style={{ background: "#000000" }}
     >
       <Background />
@@ -138,8 +162,47 @@ function Login({ onAuth }) {
               </Link>
             </p>
           </div>
+
+          <div className="mt-3 text-center">
+            <button
+              onClick={runDebug}
+              disabled={debugLoading}
+              className="inline-flex items-center gap-1.5 text-[11px] text-white/20 hover:text-white/50 transition-colors"
+            >
+              {debugLoading ? <Loader2 size={12} className="animate-spin" /> : <Bug size={12} />}
+              {debugLoading ? "Running diagnostics..." : "Network Debug"}
+            </button>
+          </div>
         </div>
       </motion.div>
+
+      {debugLog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-6">
+          <div className="w-full max-w-[640px] max-h-[80vh] rounded-2xl bg-[#0a0a0a] border border-white/10 flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
+              <span className="text-sm font-semibold text-white">Network Debug Log</span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={copyDebug}
+                  className="flex items-center gap-1.5 rounded-lg bg-white/5 px-3 py-1.5 text-xs text-white/60 hover:text-white hover:bg-white/10 transition-all"
+                >
+                  {copied ? <Check size={12} /> : <Copy size={12} />}
+                  {copied ? "Copied!" : "Copy"}
+                </button>
+                <button
+                  onClick={() => setDebugLog(null)}
+                  className="text-white/40 hover:text-white transition-colors"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+            <pre className="flex-1 overflow-auto p-5 text-xs text-white/70 font-mono whitespace-pre-wrap leading-relaxed">
+              {debugLog}
+            </pre>
+          </div>
+        </div>
+      )}
     </motion.div>
   );
 }

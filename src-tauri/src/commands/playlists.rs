@@ -1,8 +1,5 @@
 use serde_json::Value;
-use reqwest::Client;
 use crate::services::api::ApiClient;
-
-const API_BASE: &str = "https://api.juicevault.xyz";
 
 #[tauri::command]
 pub async fn get_playlist(access_token: String, playlist_id: String) -> Result<Value, String> {
@@ -52,20 +49,26 @@ pub async fn remove_song_from_playlist(access_token: String, playlist_id: String
 
 #[tauri::command]
 pub async fn upload_playlist_cover(access_token: String, playlist_id: String, file_data: Vec<u8>, file_name: String) -> Result<Value, String> {
-    let client = Client::new();
-    let part = reqwest::multipart::Part::bytes(file_data)
-        .file_name(file_name)
-        .mime_str("image/png").map_err(|e| e.to_string())?;
-    let form = reqwest::multipart::Form::new().part("cover", part);
-
+    let client = ApiClient::new();
     let ca = crate::services::api::extract_ca_pub(&access_token).unwrap_or_default();
-    let mut req = client
-        .post(format!("{}/user/playlists/{}/cover", API_BASE, playlist_id))
-        .header("Authorization", format!("Bearer {}", access_token))
-        .multipart(form);
-    if !ca.is_empty() { req = req.header("X-CA", &ca); }
+    let resp = client.send(|http| {
+        let part = reqwest::multipart::Part::bytes(file_data.clone())
+            .file_name(file_name.clone())
+            .mime_str("image/png")
+            .expect("static image/png MIME type must be valid");
+        let form = reqwest::multipart::Form::new().part("cover", part);
 
-    let resp = req.send().await.map_err(|e| format!("Network error: {}", e))?;
+        let mut req = http
+            .post(format!("https://api.juicevault.xyz/user/playlists/{}/cover", playlist_id))
+            .header("Authorization", format!("Bearer {}", access_token))
+            .multipart(form);
+
+        if !ca.is_empty() {
+            req = req.header("X-CA", &ca);
+        }
+
+        req
+    }).await?;
     let status = resp.status();
     let text = resp.text().await.map_err(|e| e.to_string())?;
     if !status.is_success() { return Err(text); }

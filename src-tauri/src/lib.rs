@@ -60,6 +60,7 @@ pub fn run() {
             commands::updater::check_for_update,
             commands::eras::fetch_song_eras,
             commands::cover_upload::upload_cover_temp,
+            commands::debug::debug_network,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

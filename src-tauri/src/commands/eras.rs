@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 use serde_json::Value;
-use reqwest::Client;
+use crate::services::api::ApiClient;
 
-const API_BASE: &str = "https://api.juicevault.xyz";
 const CONCURRENCY: usize = 30;
 
 pub struct EraCache {
@@ -16,14 +15,11 @@ impl EraCache {
     }
 }
 
-async fn fetch_tracker_era(client: &Client, song_id: &str) -> Option<(String, String)> {
-    let resp = client
-        .get(format!("{}/music/tracker/info/{}", API_BASE, song_id))
-        .send()
+async fn fetch_tracker_era(client: &ApiClient, song_id: &str) -> Option<(String, String)> {
+    let val = client
+        .public_get(&format!("/music/tracker/info/{}", song_id))
         .await
         .ok()?;
-    let text = resp.text().await.ok()?;
-    let val: Value = serde_json::from_str(&text).ok()?;
 
     if let Some(obj) = val.as_object() {
         for (key, v) in obj {
@@ -63,7 +59,7 @@ pub async fn fetch_song_eras(
         return Ok(serde_json::json!(result));
     }
 
-    let client = Client::new();
+    let client = ApiClient::new();
     let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(CONCURRENCY));
     let client = std::sync::Arc::new(client);
 

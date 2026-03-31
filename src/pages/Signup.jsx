@@ -56,7 +56,7 @@ function Signup({ onAuth }) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="relative flex h-screen w-screen items-center justify-center overflow-hidden"
+      className="app-viewport relative flex items-center justify-center overflow-hidden"
       style={{ background: "#000000" }}
     >
       <Background />
