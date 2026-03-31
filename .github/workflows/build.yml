@@ -76,62 +76,6 @@ jobs:
             src-tauri/target/${{ matrix.target }}/release/bundle/**/*.rpm
             src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
           if-no-files-found: ignore
-
-  # build-android:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-
-  #     - name: Install Rust
-  #       uses: dtolnay/rust-toolchain@stable
-  #       with:
-  #         targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
-
-  #     - name: Setup Java
-  #       uses: actions/setup-java@v4
-  #       with:
-  #         distribution: temurin
-  #         java-version: '17'
-
-  #     - name: Setup Android SDK
-  #       uses: android-actions/setup-android@v3
-
-  #     - name: Install Android NDK
-  #       run: sdkmanager "ndk;27.0.12077973"
-
-  #     - name: Setup Node
-  #       uses: actions/setup-node@v4
-  #       with:
-  #         node-version: 20
-
-  #     - name: Install frontend dependencies
-  #       run: npm ci
-
-  #     - name: Initialize Tauri Android
-  #       run: npx tauri android init
-
-  #     - name: Build Android APK
-  #       env:
-  #         NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
-  #       run: npx tauri android build --apk
-
-  #     - name: Sign APK
-  #       run: |
-  #         keytool -genkey -v -keystore release.keystore -alias juicevault -keyalg RSA -keysize 2048 -validity 10000 -storepass juicevault -keypass juicevault -dname "CN=JuiceVault,O=JuiceVault,C=US"
-  #         APK=$(find src-tauri/gen/android -name "*.apk" -type f | head -1)
-  #         if [ -n "$APK" ]; then
-  #           BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/*/ | sort -V | tail -1)
-  #           ${BUILD_TOOLS}zipalign -v 4 "$APK" aligned.apk
-  #           ${BUILD_TOOLS}apksigner sign --ks release.keystore --ks-pass pass:juicevault --key-pass pass:juicevault --out JuiceVault-android.apk aligned.apk
-  #         fi
-
-  #     - name: Upload Android artifact
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: juicevault-android
-  #         path: JuiceVault-android.apk
-  #         if-no-files-found: ignore
-
   build-ios:
     runs-on: macos-latest
     steps:
@@ -211,7 +155,7 @@ jobs:
           if-no-files-found: ignore
 
   zip-and-upload:
-    needs: [build, build-android, build-ios]
+    needs: [build, build-ios]
     if: ${{ always() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
