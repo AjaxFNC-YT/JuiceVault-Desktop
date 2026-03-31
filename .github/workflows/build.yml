@@ -78,6 +78,8 @@ jobs:
           if-no-files-found: ignore
   build-ios:
     runs-on: macos-latest
+    env:
+      IOS_WORKDIR: ${{ runner.temp }}/juicevault-ios-src
     steps:
       - uses: actions/checkout@v4
 
@@ -91,7 +93,14 @@ jobs:
         with:
           node-version: 20
 
+      - name: Prepare isolated iOS workspace
+        run: |
+          rm -rf "$IOS_WORKDIR"
+          mkdir -p "$IOS_WORKDIR"
+          rsync -a --delete --exclude ".git" "$GITHUB_WORKSPACE/" "$IOS_WORKDIR/"
+
       - name: Read iOS app metadata
+        working-directory: ${{ env.IOS_WORKDIR }}
         run: |
           APP_NAME=$(node -p "require('./src-tauri/tauri.conf.json').productName")
           APP_ID=$(node -p "require('./src-tauri/tauri.conf.json').identifier")
@@ -100,12 +109,15 @@ jobs:
           echo "IOS_DERIVED_DATA=$RUNNER_TEMP/juicevault-ios-derived-data" >> "$GITHUB_ENV"
 
       - name: Install frontend dependencies
+        working-directory: ${{ env.IOS_WORKDIR }}
         run: npm ci
 
       - name: Initialize Tauri iOS
+        working-directory: ${{ env.IOS_WORKDIR }}
         run: npx tauri ios init
 
       - name: Locate generated iOS project
+        working-directory: ${{ env.IOS_WORKDIR }}
         run: |
           WORKSPACE=$(find src-tauri/gen/apple -maxdepth 2 -name "*.xcworkspace" -type d | head -1)
           PROJECT=$(find src-tauri/gen/apple -maxdepth 2 -name "*.xcodeproj" -type d | head -1)
@@ -141,6 +153,7 @@ jobs:
           echo "IOS_SCHEME=$SCHEME" >> "$GITHUB_ENV"
 
       - name: Debug iOS project structure
+        working-directory: ${{ env.IOS_WORKDIR }}
         run: |
           echo "=== Apple gen directory ==="
           find src-tauri/gen/apple -type f -name "*.swift" 2>/dev/null || echo "No swift files found"
@@ -155,6 +168,7 @@ jobs:
           echo "Scheme: ${IOS_SCHEME:-<none>}"
 
       - name: Enable iOS background audio
+        working-directory: ${{ env.IOS_WORKDIR }}
         run: |
           PLIST=$(find src-tauri/gen/apple -name "Info.plist" -path "*_iOS*" 2>/dev/null | head -1)
           if [ -z "$PLIST" ]; then
@@ -172,6 +186,7 @@ jobs:
           fi
 
       - name: Disable iOS code signing in generated project
+        working-directory: ${{ env.IOS_WORKDIR }}
         run: |
           PBXPROJ="${IOS_PROJECT:-${IOS_WORKSPACE%/project.xcworkspace}}/project.pbxproj"
           echo "Using project file: $PBXPROJ"
@@ -182,12 +197,35 @@ jobs:
           perl -i -pe 's/(PRODUCT_BUNDLE_IDENTIFIER = [^;]+;)/$1\n\t\t\t\tDEVELOPMENT_TEAM = "";/g unless /DEVELOPMENT_TEAM = "";/g' "$PBXPROJ"
 
       - name: Build iOS via Tauri CLI
+        working-directory: ${{ env.IOS_WORKDIR }}
         run: |
           rm -rf "$IOS_DERIVED_DATA"
-          npx tauri ios build --ci --export-method debugging || echo "Tauri export failed; attempting to package built .app manually"
+          npx tauri ios build --ci || echo "Tauri export failed; attempting to package built artifacts manually"
 
       - name: Locate built iOS app
+        working-directory: ${{ env.IOS_WORKDIR }}
         run: |
+          mapfile -t IPA_CANDIDATES < <(find src-tauri "$HOME/Library/Developer/Xcode/DerivedData" "$RUNNER_TEMP" \
+            -name "*.ipa" -type f 2>/dev/null | sort -u)
+
+          BEST_IPA_PATH=""
+          BEST_IPA_SIZE=0
+          for IPA_PATH in "${IPA_CANDIDATES[@]}"; do
+            SIZE=$(du -sk "$IPA_PATH" | cut -f1)
+            echo "Found IPA candidate: $IPA_PATH (${SIZE} KB)"
+            if [ "$SIZE" -gt "$BEST_IPA_SIZE" ]; then
+              BEST_IPA_SIZE="$SIZE"
+              BEST_IPA_PATH="$IPA_PATH"
+            fi
+          done
+
+          if [ -n "$BEST_IPA_PATH" ] && [ "$BEST_IPA_SIZE" -gt 512 ]; then
+            echo "Using generated IPA: $BEST_IPA_PATH"
+            cp "$BEST_IPA_PATH" JuiceVault-unsigned.ipa
+            ls -lh JuiceVault-unsigned.ipa
+            exit 0
+          fi
+
           mapfile -t APP_CANDIDATES < <(find src-tauri "$HOME/Library/Developer/Xcode/DerivedData" "$RUNNER_TEMP" \
             -name "$APP_NAME.app" -type d 2>/dev/null | sort -u)
 
@@ -228,7 +266,14 @@ jobs:
           fi
 
       - name: Package unsigned IPA
+        working-directory: ${{ env.IOS_WORKDIR }}
         run: |
+          if [ -f JuiceVault-unsigned.ipa ]; then
+            echo "IPA already prepared"
+            ls -lh JuiceVault-unsigned.ipa
+            exit 0
+          fi
+
           if [ ! -d "$IOS_APP_PATH" ]; then
             echo "No built app found to package"
             exit 1
@@ -244,7 +289,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: juicevault-ios
-          path: JuiceVault-unsigned.ipa
+          path: ${{ env.IOS_WORKDIR }}/JuiceVault-unsigned.ipa
           if-no-files-found: ignore
 
   zip-and-upload:
