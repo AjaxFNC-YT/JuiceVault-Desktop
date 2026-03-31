@@ -171,52 +171,57 @@ jobs:
             exit 1
           fi
 
-      - name: Build iOS app bundle (unsigned)
+      - name: Disable iOS code signing in generated project
+        run: |
+          PBXPROJ="${IOS_PROJECT:-${IOS_WORKSPACE%/project.xcworkspace}}/project.pbxproj"
+          echo "Using project file: $PBXPROJ"
+          perl -i -pe 's/CODE_SIGN_IDENTITY = ".*?"/CODE_SIGN_IDENTITY = ""/g' "$PBXPROJ"
+          perl -i -ne 'print unless /CODE_SIGNING_REQUIRED = /' "$PBXPROJ"
+          perl -i -ne 'print unless /CODE_SIGNING_ALLOWED = /' "$PBXPROJ"
+          perl -i -pe 's/(CODE_SIGN_STYLE = Automatic;)/$1\n\t\t\t\tCODE_SIGNING_REQUIRED = NO;\n\t\t\t\tCODE_SIGNING_ALLOWED = NO;/g' "$PBXPROJ"
+          perl -i -pe 's/(PRODUCT_BUNDLE_IDENTIFIER = [^;]+;)/$1\n\t\t\t\tDEVELOPMENT_TEAM = "";/g unless /DEVELOPMENT_TEAM = "";/g' "$PBXPROJ"
+
+      - name: Build iOS via Tauri CLI
         run: |
           rm -rf "$IOS_DERIVED_DATA"
-          if [ -n "${IOS_WORKSPACE:-}" ]; then
-            xcodebuild \
-              -workspace "$IOS_WORKSPACE" \
-              -scheme "$IOS_SCHEME" \
-              -configuration release \
-              -destination "generic/platform=iOS" \
-              -derivedDataPath "$IOS_DERIVED_DATA" \
-              CODE_SIGNING_ALLOWED=NO \
-              CODE_SIGNING_REQUIRED=NO \
-              CODE_SIGN_IDENTITY="" \
-              DEVELOPMENT_TEAM="" \
-              build
-          else
-            xcodebuild \
-              -project "$IOS_PROJECT" \
-              -scheme "$IOS_SCHEME" \
-              -configuration release \
-              -destination "generic/platform=iOS" \
-              -derivedDataPath "$IOS_DERIVED_DATA" \
-              CODE_SIGNING_ALLOWED=NO \
-              CODE_SIGNING_REQUIRED=NO \
-              CODE_SIGN_IDENTITY="" \
-              DEVELOPMENT_TEAM="" \
-              build
-          fi
+          npx tauri ios build --ci --export-method debugging || echo "Tauri export failed; attempting to package built .app manually"
 
-      - name: Inspect built iOS app
+      - name: Locate built iOS app
         run: |
-          APP_PATH="$IOS_DERIVED_DATA/Build/Products/release-iphoneos/$APP_NAME.app"
-          if [ ! -d "$APP_PATH" ]; then
-            echo "Expected app bundle not found at $APP_PATH"
-            find "$IOS_DERIVED_DATA" -name "*.app" -type d 2>/dev/null || true
+          mapfile -t APP_CANDIDATES < <(find src-tauri "$HOME/Library/Developer/Xcode/DerivedData" "$RUNNER_TEMP" \
+            -name "$APP_NAME.app" -type d 2>/dev/null | sort -u)
+
+          if [ "${#APP_CANDIDATES[@]}" -eq 0 ]; then
+            echo "No $APP_NAME.app bundle found after tauri ios build"
+            find src-tauri "$HOME/Library/Developer/Xcode/DerivedData" "$RUNNER_TEMP" -name "*.app" -type d 2>/dev/null || true
             exit 1
           fi
 
-          echo "App bundle: $APP_PATH"
-          du -sh "$APP_PATH"
-          ls -la "$APP_PATH"
-          if [ -f "$APP_PATH/Info.plist" ]; then
-            /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" "$APP_PATH/Info.plist" 2>/dev/null || true
-            /usr/libexec/PlistBuddy -c "Print :CFBundleName" "$APP_PATH/Info.plist" 2>/dev/null || true
+          BEST_APP_PATH=""
+          BEST_APP_SIZE=0
+          for APP_PATH in "${APP_CANDIDATES[@]}"; do
+            SIZE=$(du -sk "$APP_PATH" | cut -f1)
+            echo "Found app candidate: $APP_PATH (${SIZE} KB)"
+            if [ "$SIZE" -gt "$BEST_APP_SIZE" ]; then
+              BEST_APP_SIZE="$SIZE"
+              BEST_APP_PATH="$APP_PATH"
+            fi
+          done
+
+          if [ -z "$BEST_APP_PATH" ] || [ "$BEST_APP_SIZE" -le 512 ]; then
+            echo "Built app bundle looks too small or missing"
+            exit 1
           fi
-          if [ -f "$APP_PATH/Assets.car" ]; then
+
+          echo "IOS_APP_PATH=$BEST_APP_PATH" >> "$GITHUB_ENV"
+          echo "Selected app bundle: $BEST_APP_PATH"
+          du -sh "$BEST_APP_PATH"
+          ls -la "$BEST_APP_PATH"
+          if [ -f "$BEST_APP_PATH/Info.plist" ]; then
+            /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" "$BEST_APP_PATH/Info.plist" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Print :CFBundleName" "$BEST_APP_PATH/Info.plist" 2>/dev/null || true
+          fi
+          if [ -f "$BEST_APP_PATH/Assets.car" ]; then
             echo "Assets.car present"
           else
             echo "Assets.car missing"
@@ -224,15 +229,14 @@ jobs:
 
       - name: Package unsigned IPA
         run: |
-          APP_PATH="$IOS_DERIVED_DATA/Build/Products/release-iphoneos/$APP_NAME.app"
-          if [ ! -d "$APP_PATH" ]; then
+          if [ ! -d "$IOS_APP_PATH" ]; then
             echo "No built app found to package"
             exit 1
           fi
 
           rm -rf Payload JuiceVault-unsigned.ipa
           mkdir -p Payload
-          cp -R "$APP_PATH" "Payload/$APP_NAME.app"
+          cp -R "$IOS_APP_PATH" "Payload/$APP_NAME.app"
           ditto -c -k --sequesterRsrc --keepParent Payload JuiceVault-unsigned.ipa
           ls -lh JuiceVault-unsigned.ipa
 
