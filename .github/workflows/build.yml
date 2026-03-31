@@ -116,21 +116,22 @@ jobs:
 
           if [ -n "$WORKSPACE" ]; then
             echo "IOS_WORKSPACE=$WORKSPACE" >> "$GITHUB_ENV"
-            LIST_OUTPUT=$(xcodebuild -list -workspace "$WORKSPACE")
+            LIST_OUTPUT=$(xcodebuild -list -workspace "$WORKSPACE" 2>&1)
           else
             echo "IOS_PROJECT=$PROJECT" >> "$GITHUB_ENV"
-            LIST_OUTPUT=$(xcodebuild -list -project "$PROJECT")
+            LIST_OUTPUT=$(xcodebuild -list -project "$PROJECT" 2>&1)
           fi
 
           printf '%s\n' "$LIST_OUTPUT"
-          SCHEME=$(printf '%s\n' "$LIST_OUTPUT" | awk '
-            /^Schemes:/ { in_schemes=1; next }
-            in_schemes && /^[[:space:]]+/ {
-              gsub(/^[[:space:]]+/, "", $0);
-              print;
-              exit
-            }
-          ')
+          SCHEME=$(printf '%s\n' "$LIST_OUTPUT" | sed -n '/Schemes:/,$p' | tail -n +2 | sed 's/^[[:space:]]*//' | sed '/^$/d' | head -1)
+
+          if [ -z "$SCHEME" ]; then
+            PROJECT_BASENAME=$(basename "${PROJECT:-$WORKSPACE}")
+            PROJECT_BASENAME=${PROJECT_BASENAME%.xcodeproj}
+            PROJECT_BASENAME=${PROJECT_BASENAME%.xcworkspace}
+            SCHEME="${PROJECT_BASENAME}_iOS"
+            echo "Falling back to scheme: $SCHEME"
+          fi
 
           if [ -z "$SCHEME" ]; then
             echo "Unable to determine Xcode scheme"
