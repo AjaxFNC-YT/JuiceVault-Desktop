@@ -11,6 +11,19 @@ const SHUFFLE_MEMORY_KEY = "player.shuffle.memory.v1";
 const EARLY_SKIP_WINDOW_SECONDS = 10;
 const MAX_SHUFFLE_MEMORY_TRACKS = 750;
 const MAX_SESSION_HISTORY = 250;
+const PLAYER_VOLUME_KEY = "player.volume";
+
+function getStoredVolume() {
+  try {
+    const raw = localStorage.getItem(PLAYER_VOLUME_KEY);
+    if (raw == null) return 0.7;
+    const parsed = Number(raw);
+    if (Number.isNaN(parsed)) return 0.7;
+    return Math.max(0, Math.min(1, parsed));
+  } catch {
+    return 0.7;
+  }
+}
 
 function getStreamUrl(track) {
   if (track?.local && track?.path) return convertFileSrc(track.path);
@@ -20,7 +33,7 @@ function getStreamUrl(track) {
 const initialState = {
   currentTrack: null,
   isPlaying: false,
-  volume: 0.7,
+  volume: getStoredVolume(),
   progress: 0,
   duration: 0,
   queue: [],
@@ -792,13 +805,18 @@ export function PlayerProvider({ children }) {
   }, [state.volume]);
 
   const setVolume = useCallback((v) => {
-    if (IS_MOBILE) invoke("plugin:nativeaudio|set_volume", { volume: v }).catch(() => {});
+    const nextVolume = Math.max(0, Math.min(1, v));
+    try {
+      localStorage.setItem(PLAYER_VOLUME_KEY, String(nextVolume));
+    } catch {}
+
+    if (IS_MOBILE) invoke("plugin:nativeaudio|set_volume", { volume: nextVolume }).catch(() => {});
     else {
-      if (outputGainRef.current) outputGainRef.current.gain.value = v;
-      else audio.volume = v;
-      if (fadeOutAudioRef.current) fadeOutAudioRef.current.volume = v;
+      if (outputGainRef.current) outputGainRef.current.gain.value = nextVolume;
+      else audio.volume = nextVolume;
+      if (fadeOutAudioRef.current) fadeOutAudioRef.current.volume = nextVolume;
     }
-    dispatch({ type: "SET_VOLUME", payload: v });
+    dispatch({ type: "SET_VOLUME", payload: nextVolume });
   }, [audio]);
 
   const skipNext = useCallback(({ recordCurrentOutcome = true, completedCurrent = false } = {}) => {
