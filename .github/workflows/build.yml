@@ -120,55 +120,37 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$PLIST" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "$PLIST" 2>/dev/null || true
 
-      - name: Build frontend
-        run: npm run build
-
       - name: Build unsigned iOS app
         run: |
-          # Create the server addr file that Tauri's Xcode build phase expects.
-          # tauri://localhost = production mode (load frontend from bundled assets).
-          APP_ID=$(node -p "require('./src-tauri/tauri.conf.json').identifier")
-          echo "tauri://localhost" > "$TMPDIR/${APP_ID}-server-addr"
-
-          PROJECT=$(find src-tauri/gen/apple -maxdepth 1 -name "*.xcodeproj" -type d | head -1)
-          if [ -z "$PROJECT" ]; then
-            echo "ERROR: No .xcodeproj found"
-            exit 1
-          fi
-
-          SCHEME=$(xcodebuild -list -project "$PROJECT" 2>&1 \
-            | sed -n '/Schemes:/,/^$/p' | tail -n +2 \
-            | sed 's/^[[:space:]]*//' | sed '/^$/d' | head -1)
-          [ -z "$SCHEME" ] && SCHEME="$(basename "$PROJECT" .xcodeproj)_iOS"
-
-          echo "Project: $PROJECT"
-          echo "Scheme: $SCHEME"
-
-          xcodebuild build \
-            -project "$PROJECT" \
-            -scheme "$SCHEME" \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination "generic/platform=iOS" \
-            -derivedDataPath "$RUNNER_TEMP/ios-build" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM=""
+          # tauri ios build starts a WebSocket coordination server, builds the
+          # frontend + Rust, and runs xcodebuild. Signing is disabled via pbxproj
+          # patching. The export step will fail without certs - that's expected.
+          npx tauri ios build 2>&1 || true
 
       - name: Package unsigned IPA
         run: |
-          APP_PATH=$(find "$RUNNER_TEMP/ios-build/Build/Products" \
-            -name "*.app" -type d 2>/dev/null | head -1)
+          echo "=== Searching for .app bundles ==="
+          find "$HOME/Library/Developer/Xcode" src-tauri -name "*.app" -type d 2>/dev/null | while read -r p; do
+            echo "  $(du -sk "$p" | cut -f1) KB  $p"
+          done
+
+          # Check Xcode archives first (from xcodebuild archive step)
+          APP_PATH=$(find "$HOME/Library/Developer/Xcode/Archives" \
+            -name "*.app" -path "*/Products/Applications/*" -type d 2>/dev/null \
+            | head -1)
+
+          # Fall back to DerivedData
+          [ -z "$APP_PATH" ] && APP_PATH=$(find "$HOME/Library/Developer/Xcode/DerivedData" \
+            -name "*.app" -path "*iphoneos*" -type d 2>/dev/null \
+            | head -1)
 
           if [ -z "$APP_PATH" ]; then
-            echo "ERROR: No .app found in build products"
-            find "$RUNNER_TEMP/ios-build" -type d 2>/dev/null | head -30
+            echo "ERROR: No .app bundle found anywhere"
             exit 1
           fi
 
           SIZE_KB=$(du -sk "$APP_PATH" | cut -f1)
-          echo "Found app: $APP_PATH (${SIZE_KB} KB)"
+          echo "Using: $APP_PATH (${SIZE_KB} KB)"
           if [ "$SIZE_KB" -lt 500 ]; then
             echo "ERROR: App bundle too small (${SIZE_KB} KB) - build likely failed"
             ls -laR "$APP_PATH"
