@@ -37,6 +37,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                 let handle = mobile::init(app, api)?;
                 app.manage(handle);
             }
+            #[cfg(not(mobile))]
             let _ = (app, api);
             Ok(())
         })
