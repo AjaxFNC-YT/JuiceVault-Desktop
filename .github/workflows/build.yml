@@ -94,9 +94,6 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build frontend
-        run: npm run build
-
       - name: Initialize Tauri iOS project
         run: npx tauri ios init
 
@@ -112,48 +109,34 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$PLIST" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "$PLIST" 2>/dev/null || true
 
-      - name: Build unsigned iOS app via xcodebuild
+      - name: Build unsigned iOS app
         run: |
-          PROJECT=$(find src-tauri/gen/apple -maxdepth 1 -name "*.xcodeproj" -type d | head -1)
-          if [ -z "$PROJECT" ]; then
-            echo "ERROR: No .xcodeproj found in src-tauri/gen/apple"
-            find src-tauri/gen/apple -type d -maxdepth 2
-            exit 1
-          fi
-          echo "Using project: $PROJECT"
+          ARCHIVE_PATH="$RUNNER_TEMP/JuiceVault.xcarchive"
 
-          SCHEME=$(xcodebuild -list -project "$PROJECT" 2>&1 \
-            | sed -n '/Schemes:/,/^$/p' | tail -n +2 \
-            | sed 's/^[[:space:]]*//' | sed '/^$/d' | head -1)
-
-          if [ -z "$SCHEME" ]; then
-            SCHEME="${PROJECT##*/}"
-            SCHEME="${SCHEME%.xcodeproj}_iOS"
-            echo "Falling back to scheme: $SCHEME"
-          fi
-          echo "Using scheme: $SCHEME"
-
-          xcodebuild build \
-            -project "$PROJECT" \
-            -scheme "$SCHEME" \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination "generic/platform=iOS" \
-            -derivedDataPath "$RUNNER_TEMP/ios-build" \
+          # tauri ios build handles: frontend build, Rust cross-compilation,
+          # server addr file, and xcodebuild archive.
+          # Extra args after -- are passed to xcodebuild.
+          # Archive succeeds unsigned; export step may fail (that's expected).
+          npx tauri ios build -- \
+            -archivePath "$ARCHIVE_PATH" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM=""
+            DEVELOPMENT_TEAM="" \
+          || true
 
-      - name: Package unsigned IPA
-        run: |
-          APP_PATH=$(find "$RUNNER_TEMP/ios-build" -name "*.app" -path "*/Release-iphoneos/*" -type d | head -1)
-          [ -z "$APP_PATH" ] && APP_PATH=$(find "$RUNNER_TEMP/ios-build" -name "*.app" -type d | head -1)
-          if [ -z "$APP_PATH" ]; then
-            echo "ERROR: No .app bundle found after build"
-            find "$RUNNER_TEMP/ios-build" -type d 2>/dev/null | head -30
+          # The .app lives inside the archive
+          APP_PATH="$ARCHIVE_PATH/Products/Applications/JuiceVault.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "Archive .app not found at expected path, searching..."
+            APP_PATH=$(find "$ARCHIVE_PATH" -name "*.app" -type d 2>/dev/null | head -1)
+          fi
+          if [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: No .app found in archive"
+            find "$ARCHIVE_PATH" -type d 2>/dev/null | head -30 || echo "Archive directory does not exist"
             exit 1
           fi
+
           echo "Packaging: $APP_PATH ($(du -sh "$APP_PATH" | cut -f1))"
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
