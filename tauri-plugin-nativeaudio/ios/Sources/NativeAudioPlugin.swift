@@ -453,7 +453,13 @@ class AudioEngine {
     }
 }
 
-// Argument types for Tauri invoke parsing (JSON numbers → Double)
+// Argument types for Tauri invoke parseArgs (all fields optional for safety)
+private class PlayTrackArgs: Decodable {
+    let url: String?
+    let title: String?
+    let artist: String?
+    let artworkUrl: String?
+}
 private class SeekArgs: Decodable { let time: Double? }
 private class VolumeArgs: Decodable { let volume: Double? }
 private class EqArgs: Decodable {
@@ -476,11 +482,13 @@ class NativeAudioPlugin: Plugin {
     }
 
     @objc public func playTrack(_ invoke: Invoke) {
-        let url = invoke.getString("url") ?? ""
-        let title = invoke.getString("title")
-        let artist = invoke.getString("artist")
-        let artworkUrl = invoke.getString("artworkUrl")
-        eng.playTrack(url: url, title: title, artist: artist, artworkUrl: artworkUrl)
+        let args = try? invoke.parseArgs(PlayTrackArgs.self)
+        eng.playTrack(
+            url: args?.url ?? "",
+            title: args?.title,
+            artist: args?.artist,
+            artworkUrl: args?.artworkUrl
+        )
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             invoke.resolve(self.eng.getState() as! JSObject)
         }
