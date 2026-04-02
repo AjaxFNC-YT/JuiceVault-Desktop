@@ -453,6 +453,15 @@ class AudioEngine {
     }
 }
 
+// Argument types for Tauri invoke parsing (JSON numbers → Double)
+private class SeekArgs: Decodable { let time: Double? }
+private class VolumeArgs: Decodable { let volume: Double? }
+private class EqArgs: Decodable {
+    let bass: Double?; let mid: Double?; let treble: Double?
+    let reverb: Double?; let gain: Double?
+}
+private class CrossfadeArgs: Decodable { let seconds: Double? }
+
 class NativeAudioPlugin: Plugin {
     private var eng: AudioEngine { AudioEngine.shared }
 
@@ -493,30 +502,32 @@ class NativeAudioPlugin: Plugin {
     }
 
     @objc public func seek(_ invoke: Invoke) {
-        let time = invoke.getDouble("time") ?? 0
-        eng.seek(to: time)
+        let args = try? invoke.parseArgs(SeekArgs.self)
+        eng.seek(to: args?.time ?? 0)
         invoke.resolve(eng.getState() as! JSObject)
     }
 
     @objc public func setVolume(_ invoke: Invoke) {
-        let vol = invoke.getFloat("volume") ?? 1.0
-        eng.setVolume(vol)
+        let args = try? invoke.parseArgs(VolumeArgs.self)
+        eng.setVolume(Float(args?.volume ?? 1.0))
         invoke.resolve(eng.getState() as! JSObject)
     }
 
     @objc public func setEq(_ invoke: Invoke) {
-        let bass   = invoke.getFloat("bass") ?? 0
-        let mid    = invoke.getFloat("mid") ?? 0
-        let treble = invoke.getFloat("treble") ?? 0
-        let rev    = invoke.getFloat("reverb") ?? 0
-        let gain   = invoke.getFloat("gain") ?? 0
-        eng.setEq(bass: bass, mid: mid, treble: treble, reverbMix: rev, gain: gain)
+        let args = try? invoke.parseArgs(EqArgs.self)
+        eng.setEq(
+            bass: Float(args?.bass ?? 0),
+            mid: Float(args?.mid ?? 0),
+            treble: Float(args?.treble ?? 0),
+            reverbMix: Float(args?.reverb ?? 0),
+            gain: Float(args?.gain ?? 0)
+        )
         invoke.resolve(eng.getState() as! JSObject)
     }
 
     @objc public func setCrossfade(_ invoke: Invoke) {
-        let seconds = invoke.getDouble("seconds") ?? 0
-        eng.setCrossfade(seconds)
+        let args = try? invoke.parseArgs(CrossfadeArgs.self)
+        eng.setCrossfade(args?.seconds ?? 0)
         invoke.resolve(eng.getState() as! JSObject)
     }
 
