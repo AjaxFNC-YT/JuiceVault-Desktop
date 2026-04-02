@@ -105,11 +105,8 @@ jobs:
           sed -i '' 's/CODE_SIGN_STYLE = Automatic/CODE_SIGN_STYLE = Manual/g' "$PBXPROJ"
           sed -i '' 's/DEVELOPMENT_TEAM = "[^"]*"/DEVELOPMENT_TEAM = ""/g' "$PBXPROJ"
           sed -i '' 's/CODE_SIGN_IDENTITY = "[^"]*"/CODE_SIGN_IDENTITY = ""/g' "$PBXPROJ"
-          # Inject signing-disabled settings after each CODE_SIGN_STYLE line
-          sed -i '' '/CODE_SIGN_STYLE = Manual;/a\
-\t\t\t\tCODE_SIGNING_REQUIRED = NO;\
-\t\t\t\tCODE_SIGNING_ALLOWED = NO;
-' "$PBXPROJ"
+          # Inject CODE_SIGNING_REQUIRED=NO and CODE_SIGNING_ALLOWED=NO after each CODE_SIGN_STYLE line
+          perl -i -pe 's/(CODE_SIGN_STYLE = Manual;)/$1\n\t\t\t\tCODE_SIGNING_REQUIRED = NO;\n\t\t\t\tCODE_SIGNING_ALLOWED = NO;/g' "$PBXPROJ"
 
       - name: Enable background audio
         run: |
