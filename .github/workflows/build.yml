@@ -126,9 +126,9 @@ jobs:
       - name: Build unsigned iOS app
         run: |
           # Create the server addr file that Tauri's Xcode build phase expects.
-          # Empty = production mode (load frontend from bundled assets).
+          # tauri://localhost = production mode (load frontend from bundled assets).
           APP_ID=$(node -p "require('./src-tauri/tauri.conf.json').identifier")
-          printf '' > "$TMPDIR/${APP_ID}-server-addr"
+          echo "tauri://localhost" > "$TMPDIR/${APP_ID}-server-addr"
 
           PROJECT=$(find src-tauri/gen/apple -maxdepth 1 -name "*.xcodeproj" -type d | head -1)
           if [ -z "$PROJECT" ]; then
