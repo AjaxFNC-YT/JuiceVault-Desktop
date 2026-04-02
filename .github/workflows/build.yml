@@ -97,6 +97,20 @@ jobs:
       - name: Initialize Tauri iOS project
         run: npx tauri ios init
 
+      - name: Disable code signing in generated project
+        run: |
+          PBXPROJ=$(find src-tauri/gen/apple -name "project.pbxproj" | head -1)
+          echo "Patching: $PBXPROJ"
+          # Switch from Automatic to Manual signing and disable all code signing
+          sed -i '' 's/CODE_SIGN_STYLE = Automatic/CODE_SIGN_STYLE = Manual/g' "$PBXPROJ"
+          sed -i '' 's/DEVELOPMENT_TEAM = "[^"]*"/DEVELOPMENT_TEAM = ""/g' "$PBXPROJ"
+          sed -i '' 's/CODE_SIGN_IDENTITY = "[^"]*"/CODE_SIGN_IDENTITY = ""/g' "$PBXPROJ"
+          # Inject signing-disabled settings after each CODE_SIGN_STYLE line
+          sed -i '' '/CODE_SIGN_STYLE = Manual;/a\
+\t\t\t\tCODE_SIGNING_REQUIRED = NO;\
+\t\t\t\tCODE_SIGNING_ALLOWED = NO;
+' "$PBXPROJ"
+
       - name: Enable background audio
         run: |
           PLIST=$(find src-tauri/gen/apple -name "Info.plist" -path "*_iOS*" 2>/dev/null | head -1)
@@ -114,9 +128,8 @@ jobs:
           ARCHIVE_PATH="$RUNNER_TEMP/JuiceVault.xcarchive"
 
           # tauri ios build handles: frontend build, Rust cross-compilation,
-          # server addr file, and xcodebuild archive.
-          # Extra args after -- are passed to xcodebuild.
-          # Archive succeeds unsigned; export step may fail (that's expected).
+          # server addr file, and xcodebuild.
+          # The export step may fail without signing - we only need the .app.
           npx tauri ios build -- \
             -archivePath "$ARCHIVE_PATH" \
             CODE_SIGNING_ALLOWED=NO \
