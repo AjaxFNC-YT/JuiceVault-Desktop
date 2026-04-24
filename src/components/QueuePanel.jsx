@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -46,13 +46,19 @@ function QueuePanel({ open, onClose, onInfo, onAddToPlaylist }) {
   } = usePlayer();
   const [limit, setLimit] = useState(INITIAL_LIMIT);
   const [draggingQueueIndex, setDraggingQueueIndex] = useState(null);
-  const [dropQueueIndex, setDropQueueIndex] = useState(null);
+  const [dropPlacement, setDropPlacement] = useState(null);
+  const queueListRef = useRef(null);
+  const rowRefs = useRef(new Map());
+  const dragSessionRef = useRef(null);
+  const dropPlacementRef = useRef(null);
+  const dragFrameRef = useRef(null);
+  const pendingDragPointRef = useRef(null);
 
   useEffect(() => {
     if (open) {
       setLimit(INITIAL_LIMIT);
       setDraggingQueueIndex(null);
-      setDropQueueIndex(null);
+      setDropPlacement(null);
     }
   }, [open]);
 
@@ -79,33 +85,220 @@ function QueuePanel({ open, onClose, onInfo, onAddToPlaylist }) {
   const a1 = hexToRgb(theme.accent[1]);
   const isCustomQueue = state.queueSource === "queue";
 
-  const handleDragStart = useCallback((queueIndex) => {
-    setDraggingQueueIndex(queueIndex);
-    setDropQueueIndex(queueIndex);
+  const clearDragState = useCallback(() => {
+    const session = dragSessionRef.current;
+    const draggedRow = session ? rowRefs.current.get(session.queueIndex) : null;
+    if (dragFrameRef.current) {
+      cancelAnimationFrame(dragFrameRef.current);
+      dragFrameRef.current = null;
+    }
+    if (draggedRow) {
+      draggedRow.style.transition = "";
+      draggedRow.style.transform = "";
+      draggedRow.style.willChange = "";
+    }
+    pendingDragPointRef.current = null;
+    dragSessionRef.current = null;
+    dropPlacementRef.current = null;
+    setDraggingQueueIndex(null);
+    setDropPlacement(null);
+    document.body.style.userSelect = "";
+    document.body.style.cursor = "";
   }, []);
 
-  const handleDragOver = useCallback((event, queueIndex) => {
-    event.preventDefault();
-    if (draggingQueueIndex == null || draggingQueueIndex === queueIndex) return;
-    setDropQueueIndex(queueIndex);
-  }, [draggingQueueIndex]);
+  const updateDropPlacement = useCallback((clientY, draggingIndex) => {
+    const rows = visibleQueue
+      .filter((track) => !track.isCurrent && track.queueIndex !== draggingIndex)
+      .map((track) => ({
+        queueIndex: track.queueIndex,
+        element: rowRefs.current.get(track.queueIndex),
+      }))
+      .filter((entry) => entry.element);
 
-  const handleDrop = useCallback((event, queueIndex) => {
-    event.preventDefault();
-    if (draggingQueueIndex == null || draggingQueueIndex === queueIndex) {
-      setDraggingQueueIndex(null);
-      setDropQueueIndex(null);
+    if (!rows.length) {
+      dropPlacementRef.current = null;
+      setDropPlacement(null);
       return;
     }
 
-    moveQueueItem(draggingQueueIndex, queueIndex);
-    setDraggingQueueIndex(null);
-    setDropQueueIndex(null);
-  }, [draggingQueueIndex, moveQueueItem]);
+    const rects = rows.map((row) => ({
+      ...row,
+      rect: row.element.getBoundingClientRect(),
+    }));
 
-  const clearDragState = useCallback(() => {
-    setDraggingQueueIndex(null);
-    setDropQueueIndex(null);
+    for (let index = 0; index < rects.length; index += 1) {
+      const row = rects[index];
+      const previous = rects[index - 1];
+      const next = rects[index + 1];
+      const zoneTop = previous ? (previous.rect.bottom + row.rect.top) / 2 : Number.NEGATIVE_INFINITY;
+      const zoneBottom = next ? (row.rect.bottom + next.rect.top) / 2 : Number.POSITIVE_INFINITY;
+
+      if (clientY >= zoneTop && clientY <= zoneBottom) {
+        const midpoint = row.rect.top + row.rect.height / 2;
+        const placement = {
+          queueIndex: row.queueIndex,
+          position: clientY < midpoint ? "before" : "after",
+        };
+        const current = dropPlacementRef.current;
+        if (current?.queueIndex === placement.queueIndex && current?.position === placement.position) return;
+        dropPlacementRef.current = placement;
+        setDropPlacement(placement);
+        return;
+      }
+    }
+
+    const firstRect = rects[0].rect;
+    if (clientY < firstRect.top) {
+      const placement = { queueIndex: rows[0].queueIndex, position: "before" };
+      const current = dropPlacementRef.current;
+      if (current?.queueIndex === placement.queueIndex && current?.position === placement.position) return;
+      dropPlacementRef.current = placement;
+      setDropPlacement(placement);
+      return;
+    }
+
+    const lastRow = rows[rows.length - 1];
+    const placement = { queueIndex: lastRow.queueIndex, position: "after" };
+    const current = dropPlacementRef.current;
+    if (current?.queueIndex === placement.queueIndex && current?.position === placement.position) return;
+    dropPlacementRef.current = placement;
+    setDropPlacement(placement);
+  }, [visibleQueue]);
+
+  const moveDragSession = useCallback((clientX, clientY) => {
+    const session = dragSessionRef.current;
+    if (!session) return;
+
+    const distance = Math.abs(clientY - session.startY) + Math.abs(clientX - session.startX);
+    if (!session.didMove && distance > 3) {
+      session.didMove = true;
+      setDraggingQueueIndex(session.queueIndex);
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "grabbing";
+    }
+
+    if (!session.didMove) return;
+
+    const offsetY = Math.max(session.minOffsetY, Math.min(session.maxOffsetY, clientY - session.startY));
+    pendingDragPointRef.current = {
+      clientY: session.startY + offsetY,
+      offsetY,
+      queueIndex: session.queueIndex,
+    };
+    if (dragFrameRef.current) return;
+
+    dragFrameRef.current = requestAnimationFrame(() => {
+      const point = pendingDragPointRef.current;
+      dragFrameRef.current = null;
+      if (!point) return;
+      const row = rowRefs.current.get(point.queueIndex);
+      if (row) {
+        row.style.transition = "none";
+        row.style.transform = `translate3d(0, ${point.offsetY}px, 0)`;
+        row.style.willChange = "transform";
+      }
+      updateDropPlacement(point.clientY, point.queueIndex);
+    });
+  }, [updateDropPlacement]);
+
+  const finishDragSession = useCallback(() => {
+    const session = dragSessionRef.current;
+    if (!session) {
+      clearDragState();
+      return;
+    }
+
+    if (session.didMove) {
+      const placement = dropPlacementRef.current;
+      if (placement) {
+        const fromIndex = session.queueIndex;
+        moveQueueItem(fromIndex, placement.queueIndex, { placement: placement.position });
+      }
+      clearDragState();
+      return;
+    }
+
+    clearDragState();
+    session.onClick?.();
+  }, [clearDragState, moveQueueItem]);
+
+  const beginHandleDrag = useCallback((queueIndex, event, onClick) => {
+    if (event.button !== 0) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (dragSessionRef.current) return;
+
+    const row = rowRefs.current.get(queueIndex);
+    const rowRect = row?.getBoundingClientRect();
+    const listRect = queueListRef.current?.getBoundingClientRect();
+    const minOffsetY = rowRect && listRect ? listRect.top - rowRect.top + 6 : Number.NEGATIVE_INFINITY;
+    const maxOffsetY = rowRect && listRect ? listRect.bottom - rowRect.bottom - 6 : Number.POSITIVE_INFINITY;
+
+    event.currentTarget?.setPointerCapture?.(event.pointerId);
+    dragSessionRef.current = {
+      queueIndex,
+      startX: event.clientX,
+      startY: event.clientY,
+      minOffsetY,
+      maxOffsetY,
+      pointerId: event.pointerId,
+      didMove: false,
+      onClick,
+    };
+  }, []);
+
+  const handleDragMove = useCallback((event) => {
+    const session = dragSessionRef.current;
+    if (!session || session.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    moveDragSession(event.clientX, event.clientY);
+  }, [moveDragSession]);
+
+  const handleDragEnd = useCallback((event) => {
+    const session = dragSessionRef.current;
+    if (!session || session.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget?.releasePointerCapture?.(event.pointerId);
+    finishDragSession();
+  }, [finishDragSession]);
+
+  useEffect(() => {
+    const onWindowPointerMove = (event) => {
+      const session = dragSessionRef.current;
+      if (!session || session.pointerId !== event.pointerId) return;
+      event.preventDefault();
+      moveDragSession(event.clientX, event.clientY);
+    };
+
+    const onWindowPointerUp = (event) => {
+      const session = dragSessionRef.current;
+      if (!session || session.pointerId !== event.pointerId) return;
+      event.preventDefault();
+      finishDragSession();
+    };
+
+    window.addEventListener("pointermove", onWindowPointerMove, { passive: false });
+    window.addEventListener("pointerup", onWindowPointerUp, { passive: false });
+    window.addEventListener("pointercancel", onWindowPointerUp, { passive: false });
+    window.addEventListener("blur", finishDragSession);
+    return () => {
+      window.removeEventListener("pointermove", onWindowPointerMove);
+      window.removeEventListener("pointerup", onWindowPointerUp);
+      window.removeEventListener("pointercancel", onWindowPointerUp);
+      window.removeEventListener("blur", finishDragSession);
+    };
+  }, [finishDragSession, moveDragSession]);
+
+  const registerRowRef = useCallback((queueIndex, node) => {
+    if (!node) {
+      rowRefs.current.delete(queueIndex);
+      return;
+    }
+    rowRefs.current.set(queueIndex, node);
   }, []);
 
   const handleInfo = useCallback((track) => {
@@ -144,30 +337,34 @@ function QueuePanel({ open, onClose, onInfo, onAddToPlaylist }) {
           transition={{ duration: 0.24, ease: "easeOut" }}
         >
           <div
-            className="relative overflow-hidden border-b border-white/[0.06] px-5 py-5 sm:px-7"
-            style={isMobile ? { paddingTop: "max(22px, env(safe-area-inset-top, 22px))" } : undefined}
+            className="relative overflow-hidden border-b border-white/[0.06] px-5 py-4 sm:px-7"
+            style={isMobile ? { paddingTop: "max(18px, env(safe-area-inset-top, 18px))" } : undefined}
           >
             <div
               className="absolute inset-0 opacity-70"
               style={{
-                background: `radial-gradient(circle at top left, rgba(${a1}, 0.2), transparent 42%), radial-gradient(circle at top right, rgba(${a0}, 0.15), transparent 44%)`,
+                background: `radial-gradient(circle at top left, rgba(${a1}, 0.18), transparent 42%), radial-gradient(circle at top right, rgba(${a0}, 0.12), transparent 44%)`,
               }}
             />
-            <div className="relative flex items-start justify-between gap-4">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-3">
-                  <ListOrdered size={20} className="text-white/55" />
-                  <h2 className="text-[22px] font-bold text-white">Current Queue</h2>
+            <div className="relative flex items-center justify-between gap-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.04] text-white/55">
+                  <ListOrdered size={18} />
                 </div>
-                <p className="mt-2 max-w-[720px] text-[12px] leading-6 text-white/42">
-                  {state.shuffle
-                    ? `Queue showing ${visibleQueue.length} song${visibleQueue.length !== 1 ? "s" : ""}, including the current track. Reorder anything you want to lock in next.`
-                    : `${visibleQueue.length} song${visibleQueue.length !== 1 ? "s" : ""} in the current queue, including what is playing now.`}
-                </p>
+                <div className="min-w-0">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <h2 className="truncate text-[21px] font-bold leading-none text-white">Current Queue</h2>
+                    {state.shuffle && <span className="hidden rounded-full border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/35 sm:inline-flex">Shuffle</span>}
+                  </div>
+                  <p className="mt-1 truncate text-[12px] text-white/38">
+                    {`${visibleQueue.length} song${visibleQueue.length !== 1 ? "s" : ""} queued, including the current track`}
+                  </p>
+                </div>
               </div>
               <button
                 onClick={onClose}
-                className="relative z-10 rounded-xl p-2 text-white/35 transition-colors hover:bg-white/[0.06] hover:text-white/75"
+                className="relative z-10 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl text-white/35 transition-colors hover:bg-white/[0.06] hover:text-white/75"
+                aria-label="Close queue"
               >
                 <X size={18} />
               </button>
@@ -214,7 +411,7 @@ function QueuePanel({ open, onClose, onInfo, onAddToPlaylist }) {
                 style={isMobile ? { paddingBottom: "max(48px, env(safe-area-inset-bottom, 48px))" } : undefined}
               >
                 {visibleQueue.length ? (
-                  <div className="space-y-3">
+                  <div ref={queueListRef} className="space-y-3">
                     {visibleQueue.map((track, index) => (
                       <QueueRow
                         key={`${track.queueIndex}-${track.id || track.file_hash || track.path || index}`}
@@ -223,17 +420,18 @@ function QueuePanel({ open, onClose, onInfo, onAddToPlaylist }) {
                         isLast={index === visibleQueue.length - 1}
                         isCurrent={Boolean(track.isCurrent)}
                         isDragging={draggingQueueIndex === track.queueIndex}
-                        isDropTarget={!track.isCurrent && dropQueueIndex === track.queueIndex && draggingQueueIndex !== track.queueIndex}
+                        showInsertBefore={!track.isCurrent && dropPlacement?.queueIndex === track.queueIndex && dropPlacement?.position === "before" && draggingQueueIndex !== track.queueIndex}
+                        showInsertAfter={!track.isCurrent && dropPlacement?.queueIndex === track.queueIndex && dropPlacement?.position === "after" && draggingQueueIndex !== track.queueIndex}
                         onPlay={() => playQueueItem(track.queueIndex)}
                         onMoveUp={() => moveQueueItem(track.queueIndex, track.queueIndex - 1)}
                         onMoveDown={() => moveQueueItem(track.queueIndex, track.queueIndex + 1)}
                         onRemove={() => removeQueueItem(track.queueIndex)}
                         onAddToPlaylist={() => handleAddToPlaylist(track)}
                         onInfo={() => handleInfo(track)}
-                        onDragStart={() => handleDragStart(track.queueIndex)}
-                        onDragOver={(event) => handleDragOver(event, track.queueIndex)}
-                        onDrop={(event) => handleDrop(event, track.queueIndex)}
-                        onDragEnd={clearDragState}
+                        onHandlePointerDown={(event, onClick) => beginHandleDrag(track.queueIndex, event, onClick)}
+                        onHandlePointerMove={handleDragMove}
+                        onHandlePointerUp={handleDragEnd}
+                        rowRef={(node) => registerRowRef(track.queueIndex, node)}
                       />
                     ))}
                   </div>
@@ -324,46 +522,70 @@ function QueueRow({
   isLast,
   isCurrent,
   isDragging,
-  isDropTarget,
+  showInsertBefore,
+  showInsertAfter,
   onPlay,
   onMoveUp,
   onMoveDown,
   onRemove,
   onAddToPlaylist,
   onInfo,
-  onDragStart,
-  onDragOver,
-  onDrop,
-  onDragEnd,
+  onHandlePointerDown,
+  onHandlePointerMove,
+  onHandlePointerUp,
+  rowRef,
 }) {
   const cover = track?.cover ? (track.local ? track.cover : toApiUrl(track.cover)) : null;
 
   return (
-    <div
-      draggable={!isCurrent}
-      onDragStart={isCurrent ? undefined : onDragStart}
-      onDragOver={isCurrent ? undefined : onDragOver}
-      onDrop={isCurrent ? undefined : onDrop}
-      onDragEnd={isCurrent ? undefined : onDragEnd}
-      className={`group flex items-center gap-3 rounded-[22px] px-3 py-3 transition-all ${
-        isDropTarget
-          ? "border border-white/20 bg-white/[0.08] shadow-[0_0_0_1px_rgba(255,255,255,0.05)]"
-          : isCurrent
-            ? "border border-emerald-500/10 bg-[linear-gradient(135deg,rgba(16,185,129,0.12),rgba(255,255,255,0.015))] shadow-[inset_0_1px_0_rgba(255,255,255,0.02),0_0_0_1px_rgba(16,185,129,0.04)]"
-            : "border border-white/[0.05] bg-white/[0.03] hover:bg-white/[0.05]"
-      } ${isDragging ? "opacity-55" : ""}`}
+    <motion.div
+      layout="position"
+      ref={rowRef}
+      className={`group relative flex items-center gap-3 rounded-[22px] px-3 py-3 transition-colors ${
+        isCurrent
+          ? "border border-emerald-500/10 bg-[linear-gradient(135deg,rgba(16,185,129,0.12),rgba(255,255,255,0.015))] shadow-[inset_0_1px_0_rgba(255,255,255,0.02),0_0_0_1px_rgba(16,185,129,0.04)]"
+          : "border border-white/[0.05] bg-white/[0.03] hover:bg-white/[0.05]"
+      } ${isDragging ? "z-10 border-white/15 bg-white/[0.08] shadow-[0_12px_28px_rgba(0,0,0,0.28)] opacity-95" : ""}`}
+      transition={{ type: "spring", stiffness: 520, damping: 42, mass: 0.7 }}
     >
-      <button onClick={onPlay} className="grid min-w-0 flex-1 grid-cols-[72px_56px_minmax(0,1fr)_64px] items-center gap-3 text-left">
-        <div className="flex items-center gap-2 text-white/26">
-          <GripVertical size={16} className={`flex-shrink-0 ${isCurrent ? "text-white/12" : "cursor-grab text-white/22"}`} />
-          <span className={`flex h-10 min-w-10 items-center justify-center rounded-2xl border px-2 text-[11px] font-semibold ${
+      {showInsertBefore && (
+        <div className="pointer-events-none absolute -top-2 left-4 right-4 h-[2px] rounded-full bg-emerald-300 shadow-[0_0_12px_rgba(110,231,183,0.4)]" />
+      )}
+      {showInsertAfter && (
+        <div className="pointer-events-none absolute -bottom-2 left-4 right-4 h-[2px] rounded-full bg-emerald-300 shadow-[0_0_12px_rgba(110,231,183,0.4)]" />
+      )}
+      <div className="flex items-center gap-2 text-white/26">
+        <button
+          type="button"
+          disabled={isCurrent}
+          onPointerDown={(event) => {
+            if (isCurrent || event.button !== 0) return;
+            onHandlePointerDown?.(event);
+          }}
+          onPointerMove={isCurrent ? undefined : onHandlePointerMove}
+          onPointerUp={isCurrent ? undefined : onHandlePointerUp}
+          onPointerCancel={isCurrent ? undefined : onHandlePointerUp}
+          className={`touch-none rounded-xl p-1.5 transition-colors ${
             isCurrent
-              ? "border-emerald-500/10 bg-emerald-500/10 text-emerald-200"
-              : "border-white/[0.05] bg-white/[0.04] text-white/40"
-          }`}>
-            {isCurrent ? "Live" : track.queueOrder}
-          </span>
-        </div>
+              ? "cursor-default text-white/12"
+              : isDragging
+                ? "cursor-grabbing bg-white/[0.08] text-white/70"
+                : "cursor-grab text-white/24 hover:bg-white/[0.06] hover:text-white/60 active:cursor-grabbing"
+          }`}
+          title={isCurrent ? "Currently playing" : "Drag to reorder"}
+        >
+          <GripVertical size={16} className="flex-shrink-0" />
+        </button>
+        <span className={`flex h-10 min-w-10 items-center justify-center rounded-2xl border px-2 text-[11px] font-semibold ${
+          isCurrent
+            ? "border-emerald-500/10 bg-emerald-500/10 text-emerald-200"
+            : "border-white/[0.05] bg-white/[0.04] text-white/40"
+        }`}>
+          {isCurrent ? "Live" : track.queueOrder}
+        </span>
+      </div>
+
+      <button onClick={onPlay} className="grid min-w-0 flex-1 grid-cols-[56px_minmax(0,1fr)_64px] items-center gap-3 text-left">
         <div className="h-14 w-14 overflow-hidden rounded-2xl bg-white/[0.06]">
           {cover ? (
             <img src={cover} alt="" className="h-full w-full object-cover" loading="lazy" />
@@ -398,11 +620,21 @@ function QueueRow({
         onAddToPlaylist={onAddToPlaylist}
         onInfo={onInfo}
       />
-    </div>
+    </motion.div>
   );
 }
 
-function QueueRowMenu({ track, isFirst, isLast, isCurrent, onMoveUp, onMoveDown, onRemove, onAddToPlaylist, onInfo }) {
+function QueueRowMenu({
+  track,
+  isFirst,
+  isLast,
+  isCurrent,
+  onMoveUp,
+  onMoveDown,
+  onRemove,
+  onAddToPlaylist,
+  onInfo,
+}) {
   const [open, setOpen] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [position, setPosition] = useState(null);
@@ -465,7 +697,7 @@ function QueueRowMenu({ track, isFirst, isLast, isCurrent, onMoveUp, onMoveDown,
   return (
     <>
       <div className="relative flex-shrink-0">
-        <button
+        <div
           ref={buttonRef}
           onClick={(event) => {
             event.stopPropagation();
@@ -475,10 +707,20 @@ function QueueRowMenu({ track, isFirst, isLast, isCurrent, onMoveUp, onMoveDown,
             }
             setOpen(true);
           }}
+          role="button"
+          tabIndex={0}
           className={`rounded-xl p-2 transition-colors ${open ? "bg-white/[0.08] text-white/65" : "text-white/18 hover:bg-white/[0.06] hover:text-white/55"}`}
+          title="Queue actions"
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              if (open) closeMenu();
+              else setOpen(true);
+            }
+          }}
         >
           <MoreHorizontal size={17} />
-        </button>
+        </div>
       </div>
 
       {open && position && createPortal(
@@ -530,3 +772,4 @@ function EmptyCard({ text }) {
 }
 
 export default QueuePanel;
+

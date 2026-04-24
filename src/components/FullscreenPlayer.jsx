@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect, useState } from "react";
+﻿import { useRef, useCallback, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1,
@@ -9,6 +9,7 @@ import { useTheme, hexToRgb } from "@/stores/themeStore";
 import { downloadFile, showInExplorer, voteSkipRadio } from "@/lib/api";
 import PlayerPreferencesModal from "@/components/PlayerPreferencesModal";
 import QueuePanel from "@/components/QueuePanel";
+import VolumeSlider from "@/components/VolumeSlider";
 import { useIsMobile } from "@/hooks/useMobile";
 import { toApiUrl } from "@/lib/platform";
 
@@ -36,7 +37,6 @@ function FullscreenPlayer({ onClose, onInfo, onAddToPlaylist }) {
   const animFrameRef = useRef(0);
   const gradientRef = useRef(null);
   const progressRef = useRef(null);
-  const volRef = useRef(null);
   const [canvasVisible, setCanvasVisible] = useState(false);
   const [showWaveform, setShowWaveform] = useState(true);
   const showWaveformRef = useRef(true);
@@ -193,20 +193,6 @@ function FullscreenPlayer({ onClose, onInfo, onAddToPlaylist }) {
     window.addEventListener("pointerup", onUp);
   }, [seekFromPointer, startSeek, endSeek, state.duration]);
 
-  const handleVolDown = useCallback((e) => {
-    e.preventDefault();
-    const calc = (ev) => {
-      if (!volRef.current) return;
-      const rect = volRef.current.getBoundingClientRect();
-      return Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
-    };
-    const v = calc(e);
-    if (v !== undefined) setVolume(v);
-    const onMove = (ev) => { const v2 = calc(ev); if (v2 !== undefined) setVolume(v2); };
-    const onUp = () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  }, [setVolume]);
 
   const RepeatIcon = state.repeat === "one" ? Repeat1 : Repeat;
 
@@ -279,7 +265,7 @@ function FullscreenPlayer({ onClose, onInfo, onAddToPlaylist }) {
           </div>
           <div className="text-center max-w-[500px] px-2">
             <p className="text-xl sm:text-3xl font-black text-white" style={{ wordBreak: "break-word" }}>{track?.title || "No track playing"}</p>
-            <p className="text-sm sm:text-lg text-white/70 mt-2" style={{ wordBreak: "break-word" }}>{track?.artist || "—"}</p>
+            <p className="text-sm sm:text-lg text-white/70 mt-2" style={{ wordBreak: "break-word" }}>{track?.artist || "â€”"}</p>
           </div>
         </div>
 
@@ -342,15 +328,7 @@ function FullscreenPlayer({ onClose, onInfo, onAddToPlaylist }) {
                   <button onClick={() => setVolume(state.volume > 0 ? 0 : 0.7)} className="text-white/60 hover:text-white transition-colors p-1">
                     {state.volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
                   </button>
-                  <div
-                    ref={volRef}
-                    onPointerDown={handleVolDown}
-                    className="relative h-1 w-20 rounded-sm group cursor-pointer"
-                    style={{ background: "rgba(255,255,255,0.2)" }}
-                  >
-                    <div className="h-full rounded-sm" style={{ width: `${state.volume * 100}%`, background: `linear-gradient(to right, ${theme.accent[1]}, ${theme.accent[0]})` }} />
-                    <div className="absolute top-1/2 -translate-y-1/2 h-3 w-3 rounded-full bg-white shadow-md opacity-0 group-hover:opacity-100 transition-opacity" style={{ left: `calc(${state.volume * 100}% - 6px)` }} />
-                  </div>
+                  <VolumeSlider value={state.volume} onChange={setVolume} snapEnabled={state.volumeSnapEnabled} curve={state.volumeCurve} className="w-28" heightClass="h-1" />
                 </div>
               </div>
             )}
@@ -395,3 +373,7 @@ function FullscreenPlayer({ onClose, onInfo, onAddToPlaylist }) {
 }
 
 export default FullscreenPlayer;
+
+
+
+

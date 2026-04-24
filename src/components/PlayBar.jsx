@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect, useState } from "react";
+﻿import { useRef, useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { SkipBack, Play, Pause, SkipForward, Volume2, VolumeX, Repeat, Repeat1, Shuffle, Music2, Maximize2, Download, FolderOpen, Info, Radio, Users, CirclePlus, AudioWaveform, ListOrdered } from "lucide-react";
@@ -7,6 +7,7 @@ import { useTheme, hexToRgb } from "@/stores/themeStore";
 import { downloadFile, showInExplorer, voteSkipRadio } from "@/lib/api";
 import PlayerPreferencesModal from "@/components/PlayerPreferencesModal";
 import QueuePanel from "@/components/QueuePanel";
+import VolumeSlider from "@/components/VolumeSlider";
 import { useIsMobile } from "@/hooks/useMobile";
 import { toApiUrl } from "@/lib/platform";
 
@@ -60,7 +61,6 @@ function PlayBar({ onFullscreen, onInfo, onAddToPlaylist }) {
   const [showPrefs, setShowPrefs] = useState(false);
   const [showQueue, setShowQueue] = useState(false);
   const seekRef = useRef(null);
-  const volRef = useRef(null);
   const track = state.currentTrack;
   const cover = track?.cover ? (track.local ? track.cover : toApiUrl(track.cover)) : null;
   const pct = state.duration > 0 ? (state.progress / state.duration) * 100 : 0;
@@ -74,9 +74,6 @@ function PlayBar({ onFullscreen, onInfo, onAddToPlaylist }) {
     onEnd: useCallback((ratio) => endSeek(ratio * state.duration), [endSeek, state.duration]),
   });
 
-  const onVolDrag = useDragSlider(volRef, useCallback((ratio) => {
-    setVolume(ratio);
-  }, [setVolume]));
 
   const RepeatIcon = state.repeat === "one" ? Repeat1 : Repeat;
 
@@ -102,7 +99,7 @@ function PlayBar({ onFullscreen, onInfo, onAddToPlaylist }) {
           <div className="min-w-0 flex-1">
             <p className="truncate text-[13px] font-medium text-white/90">{track?.title || "No track playing"}</p>
             <div className="flex items-center gap-2">
-              <p className="truncate text-[11px] text-white/35">{track?.artist || "—"}</p>
+              <p className="truncate text-[11px] text-white/35">{track?.artist || "â€”"}</p>
               {isRadio && (
                 <span className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-brand-red flex-shrink-0">
                   <Radio size={9} className="animate-pulse" /> Live
@@ -159,7 +156,7 @@ function PlayBar({ onFullscreen, onInfo, onAddToPlaylist }) {
         <div className="min-w-0">
           <p className="truncate text-[13px] font-medium text-white/90">{track?.title || "No track playing"}</p>
           <div className="flex items-center gap-2">
-            <p className="truncate text-[11px] text-white/35">{track?.artist || "—"}</p>
+            <p className="truncate text-[11px] text-white/35">{track?.artist || "â€”"}</p>
             {isRadio && (
               <span className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-brand-red flex-shrink-0">
                 <Radio size={9} className="animate-pulse" /> Live
@@ -265,10 +262,7 @@ function PlayBar({ onFullscreen, onInfo, onAddToPlaylist }) {
         <button onClick={() => setVolume(state.volume > 0 ? 0 : 0.7)} className="text-white/40 flex-shrink-0 hover:text-white/60 transition-colors">
           {state.volume === 0 ? <VolumeX size={14} /> : <Volume2 size={14} />}
         </button>
-        <div ref={volRef} onMouseDown={onVolDrag} className="relative h-1 w-32 rounded-full bg-white/[0.08] group cursor-pointer">
-          <div className="h-full rounded-full" style={{ width: `${state.volume * 100}%`, background: `linear-gradient(to right, ${theme.accent[1]}cc, ${theme.accent[1]})` }} />
-          <div className="absolute top-1/2 -translate-y-1/2 h-2.5 w-2.5 rounded-full bg-white shadow-md opacity-0 group-hover:opacity-100 transition-opacity" style={{ left: `calc(${state.volume * 100}% - 5px)` }} />
-        </div>
+        <VolumeSlider value={state.volume} onChange={setVolume} snapEnabled={state.volumeSnapEnabled} curve={state.volumeCurve} className="w-36" heightClass="h-1" />
       </div>
       {showPrefs && createPortal(
         <AnimatePresence>
@@ -399,3 +393,7 @@ function QueueSwitchModal({ song, onCancel, onConfirm }) {
 }
 
 export default PlayBar;
+
+
+
+

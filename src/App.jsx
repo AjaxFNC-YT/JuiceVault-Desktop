@@ -75,6 +75,38 @@ function App() {
   const [verificationChecking, setVerificationChecking] = useState(false);
   const [verificationError, setVerificationError] = useState("");
 
+  const applyCurrentUserState = async () => {
+    const res = await getCurrentUser();
+    const currentUser = res?.data || res;
+    const prefs = currentUser?.preferences;
+
+    if (prefs) {
+      if (prefs.theme) { localStorage.setItem("theme", prefs.theme); window.dispatchEvent(new Event("theme-sync")); }
+      if (prefs.discordRpc != null) localStorage.setItem("discordRpc", String(prefs.discordRpc));
+      if (prefs.mergeSessionEdits != null) localStorage.setItem("mergeSessionEdits", String(prefs.mergeSessionEdits));
+      if (prefs.sortBy) localStorage.setItem("sortBy", prefs.sortBy);
+      if (prefs.localFilesEnabled != null) localStorage.setItem("localFilesEnabled", JSON.stringify(prefs.localFilesEnabled));
+      if (prefs.localFilesSources != null) localStorage.setItem("localFilesSources", JSON.stringify(prefs.localFilesSources));
+      if (prefs.titlebarStyle) {
+        localStorage.setItem("titlebarStyle", prefs.titlebarStyle);
+        window.dispatchEvent(new Event("titlebar-style-sync"));
+      }
+    }
+
+    if (!localStorage.getItem("titlebarStyle")) {
+      localStorage.setItem("titlebarStyle", getDefaultTitlebarStyle());
+      window.dispatchEvent(new Event("titlebar-style-sync"));
+    }
+
+    if (currentUser) {
+      localStorage.setItem("user", JSON.stringify(currentUser));
+      setUser(currentUser);
+      setShowVerificationGate(currentUser?.isVerified === false);
+    }
+
+    return currentUser;
+  };
+
   useEffect(() => {
     const applyAppHeight = () => {
       const viewportHeight = window.visualViewport?.height || window.innerHeight;
@@ -137,30 +169,13 @@ function App() {
       }
 
       try {
-        const res = await getCurrentUser();
-        const currentUser = res?.data || res;
-        const prefs = currentUser?.preferences;
-        if (prefs) {
-          if (prefs.theme) { localStorage.setItem("theme", prefs.theme); window.dispatchEvent(new Event("theme-sync")); }
-          if (prefs.discordRpc != null) localStorage.setItem("discordRpc", String(prefs.discordRpc));
-          if (prefs.mergeSessionEdits != null) localStorage.setItem("mergeSessionEdits", String(prefs.mergeSessionEdits));
-          if (prefs.sortBy) localStorage.setItem("sortBy", prefs.sortBy);
-          if (prefs.localFilesEnabled != null) localStorage.setItem("localFilesEnabled", JSON.stringify(prefs.localFilesEnabled));
-          if (prefs.localFilesSources != null) localStorage.setItem("localFilesSources", JSON.stringify(prefs.localFilesSources));
-          if (prefs.titlebarStyle) {
-            localStorage.setItem("titlebarStyle", prefs.titlebarStyle);
-            window.dispatchEvent(new Event("titlebar-style-sync"));
-          }
+        const currentUser = await applyCurrentUserState();
+        if (currentUser) parsed = currentUser;
+      } catch {
+        if (!localStorage.getItem("titlebarStyle")) {
+          localStorage.setItem("titlebarStyle", getDefaultTitlebarStyle());
+          window.dispatchEvent(new Event("titlebar-style-sync"));
         }
-        if (currentUser) {
-          parsed = currentUser;
-          localStorage.setItem("user", JSON.stringify(currentUser));
-        }
-      } catch {}
-
-      if (!localStorage.getItem("titlebarStyle")) {
-        localStorage.setItem("titlebarStyle", getDefaultTitlebarStyle());
-        window.dispatchEvent(new Event("titlebar-style-sync"));
       }
 
       setUser(parsed);
@@ -229,12 +244,7 @@ function App() {
     setVerificationChecking(true);
     setVerificationError("");
     try {
-      const res = await getCurrentUser();
-      const currentUser = res?.data || res;
-      if (currentUser) {
-        localStorage.setItem("user", JSON.stringify(currentUser));
-        setUser(currentUser);
-      }
+      const currentUser = await applyCurrentUserState();
       if (currentUser?.isVerified) {
         setShowVerificationGate(false);
       } else {

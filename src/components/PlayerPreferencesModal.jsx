@@ -1,6 +1,6 @@
-import { useState, useCallback, useRef } from "react";
+﻿import { useState, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
-import { X, RotateCcw } from "lucide-react";
+import { X, RotateCcw, Magnet } from "lucide-react";
 import { usePlayer } from "@/stores/playerStore";
 import { useTheme, hexToRgb } from "@/stores/themeStore";
 import { useIsMobile } from "@/hooks/useMobile";
@@ -57,7 +57,7 @@ function VerticalSlider({ label, value, min, max, step, unit, accent, onChange }
       <div
         ref={trackRef}
         onPointerDown={onPointerDown}
-        className="relative h-44 rounded-full cursor-pointer overflow-hidden"
+        className="relative h-36 rounded-full cursor-pointer overflow-hidden"
         style={{ width: 24, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)", touchAction: "none" }}
       >
         {isCenter && (
@@ -92,7 +92,7 @@ function VerticalSlider({ label, value, min, max, step, unit, accent, onChange }
 
 function PlayerPreferencesModal({ onClose }) {
   const isMobile = useIsMobile();
-  const { setEQ, getEQ, setCrossfade, getCrossfade, ensureAnalyser } = usePlayer();
+  const { state, setEQ, getEQ, setCrossfade, getCrossfade, setVolumeSnapEnabled, setVolumeCurve, ensureAnalyser } = usePlayer();
   const { theme } = useTheme();
 
   const [eq, setEqLocal] = useState(() => {
@@ -106,6 +106,8 @@ function PlayerPreferencesModal({ onClose }) {
     };
   });
   const [crossfade, setCrossfadeLocal] = useState(getCrossfade());
+  const [volumeSnapEnabled, setVolumeSnapEnabledLocal] = useState(state.volumeSnapEnabled);
+  const [volumeCurve, setVolumeCurveLocal] = useState(state.volumeCurve || 1);
 
   const handleEqChange = useCallback((param, value) => {
     ensureAnalyser();
@@ -126,6 +128,18 @@ function PlayerPreferencesModal({ onClose }) {
     setCrossfade(val);
   }, [setCrossfade]);
 
+
+  const handleVolumeSnapChange = useCallback((enabled) => {
+    setVolumeSnapEnabledLocal(enabled);
+    setVolumeSnapEnabled(enabled);
+  }, [setVolumeSnapEnabled]);
+
+  const handleVolumeCurveChange = useCallback((e) => {
+    const val = Number(e.target.value);
+    setVolumeCurveLocal(val);
+    setVolumeCurve(val);
+  }, [setVolumeCurve]);
+
   return (
     <motion.div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm"
@@ -137,14 +151,14 @@ function PlayerPreferencesModal({ onClose }) {
     >
       <motion.div
         onClick={(e) => e.stopPropagation()}
-        className={`overflow-hidden flex flex-col ${isMobile ? 'w-full h-full' : 'w-full max-w-[520px] rounded-2xl'}`}
+        className={`overflow-hidden flex flex-col ${isMobile ? 'w-full h-full' : 'w-full max-w-[520px] max-h-[86vh] rounded-2xl'}`}
         style={{ background: `linear-gradient(180deg, rgba(${hexToRgb(theme.accent[1])}, 0.15) 0%, rgba(${hexToRgb(theme.accent[1])}, 0.05) 100%), #111113`, border: isMobile ? 'none' : `1px solid rgba(${hexToRgb(theme.accent[1])}, 0.18)`, boxShadow: isMobile ? 'none' : `0 30px 80px rgba(0,0,0,0.5), 0 0 60px rgba(${hexToRgb(theme.accent[1])}, 0.08)` }}
         initial={{ opacity: 0, scale: 0.92, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.92, y: 20 }}
         transition={{ duration: 0.25, ease: "easeOut" }}
       >
-        <div className="flex items-center justify-between px-5 sm:px-6 py-4 border-b border-white/[0.06]" style={isMobile ? { paddingTop: "max(16px, env(safe-area-inset-top, 16px))" } : undefined}>
+        <div className="flex items-center justify-between px-5 sm:px-6 py-3 border-b border-white/[0.06]" style={isMobile ? { paddingTop: "max(16px, env(safe-area-inset-top, 16px))" } : undefined}>
           <h2 className="text-lg font-bold text-white">Player Preferences</h2>
           <div className="flex items-center gap-2">
             <button onClick={handleReset} className="text-white/30 hover:text-white/60 transition-colors p-1" title="Reset EQ">
@@ -156,10 +170,10 @@ function PlayerPreferencesModal({ onClose }) {
           </div>
         </div>
 
-        <div className="flex-1 px-5 sm:px-6 py-5 overflow-y-auto" style={isMobile ? { paddingBottom: "max(20px, env(safe-area-inset-bottom, 20px))" } : undefined}>
-          <p className="text-[11px] font-semibold uppercase tracking-widest text-white/25 mb-4">Equalizer</p>
+        <div className="flex-1 px-5 sm:px-6 py-3 overflow-y-auto" style={isMobile ? { paddingBottom: "max(20px, env(safe-area-inset-bottom, 20px))" } : undefined}>
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-white/25 mb-3">Equalizer</p>
 
-          <div className="flex items-center justify-center gap-5">
+          <div className="flex items-center justify-center gap-4">
             {EQ_PARAMS.map((p) => (
               <VerticalSlider
                 key={p.key}
@@ -175,8 +189,54 @@ function PlayerPreferencesModal({ onClose }) {
             ))}
           </div>
 
+
+          <div className="mt-3 pt-3 border-t border-white/[0.06]">
+            <div className="flex items-center justify-between gap-4 mb-3">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-widest text-white/25">Volume Control</p>
+                <p className="mt-1 text-[11px] text-white/35">Snap and slider response.</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={volumeSnapEnabled}
+                onClick={() => handleVolumeSnapChange(!volumeSnapEnabled)}
+                className={`relative inline-flex h-7 w-14 flex-shrink-0 items-center rounded-full border px-1 transition-colors ${volumeSnapEnabled ? "justify-end border-white/15" : "justify-start border-white/[0.08] bg-white/[0.05]"}`}
+                style={volumeSnapEnabled ? { background: `rgba(${hexToRgb(theme.accent[1])}, 0.18)` } : undefined}
+                title="Toggle volume snap points"
+              >
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-white/85 text-black/70 shadow-lg">
+                  <Magnet size={12} />
+                </span>
+              </button>
+            </div>
+
+            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-3">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[12px] font-medium text-white/70">Slider sensitivity</span>
+                <span className="rounded-full bg-white/[0.06] px-2 py-1 text-[10px] tabular-nums text-white/45">{volumeCurve.toFixed(2)}x</span>
+              </div>
+              <input
+                type="range"
+                min={0.5}
+                max={2}
+                step={0.05}
+                value={volumeCurve}
+                onChange={handleVolumeCurveChange}
+                className="mt-3 h-1 w-full cursor-pointer appearance-none rounded-full"
+                style={{
+                  background: `linear-gradient(to right, ${theme.accent[0]} ${((volumeCurve - 0.5) / 1.5) * 100}%, rgba(255,255,255,0.1) ${((volumeCurve - 0.5) / 1.5) * 100}%)`,
+                }}
+              />
+              <div className="mt-2 flex items-center justify-between text-[10px] text-white/30">
+                <span>Soft</span>
+                <span>Linear</span>
+                <span>Fast</span>
+              </div>
+            </div>
+          </div>
           {!isMobile && (
-            <div className="mt-6 pt-5 border-t border-white/[0.06]">
+            <div className="mt-3 pt-3 border-t border-white/[0.06]">
               <p className="text-[11px] font-semibold uppercase tracking-widest text-white/25 mb-3">Crossfade</p>
               <div className="flex items-center gap-4">
                 <span className="text-[12px] text-white/40 min-w-[28px]">Off</span>
@@ -207,3 +267,9 @@ function PlayerPreferencesModal({ onClose }) {
 }
 
 export default PlayerPreferencesModal;
+
+
+
+
+
+

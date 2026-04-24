@@ -1,4 +1,4 @@
-import { createContext, useContext, useReducer, useRef, useCallback, useEffect, useState } from "react";
+﻿import { createContext, useContext, useReducer, useRef, useCallback, useEffect, useState } from "react";
 import { logListen, getRadioNowPlaying, getCurrentUser, updateUserPreferences } from "@/lib/api";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -13,6 +13,8 @@ const EARLY_SKIP_WINDOW_SECONDS = 10;
 const MAX_SHUFFLE_MEMORY_TRACKS = 750;
 const MAX_SESSION_HISTORY = 250;
 const PLAYER_VOLUME_KEY = "player.volume";
+const PLAYER_VOLUME_SNAP_KEY = "player.volume.snap";
+const PLAYER_VOLUME_CURVE_KEY = "player.volume.curve";
 const COMPLETE_LISTEN_RATIO = 0.7;
 const MAX_TRUSTED_PROGRESS_DELTA_SECONDS = 2.5;
 const DEFAULT_PLAYBACK_SOURCE = "library";
@@ -47,6 +49,25 @@ function getStoredVolume() {
   }
 }
 
+function getStoredVolumeSnapEnabled() {
+  try {
+    return localStorage.getItem(PLAYER_VOLUME_SNAP_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+function getStoredVolumeCurve() {
+  try {
+    const raw = localStorage.getItem(PLAYER_VOLUME_CURVE_KEY);
+    if (raw == null) return 1;
+    const parsed = Number(raw);
+    if (Number.isNaN(parsed)) return 1;
+    return Math.max(0.5, Math.min(2, parsed));
+  } catch {
+    return 1;
+  }
+}
 function getStreamUrl(track) {
   if (track?.local && track?.path) return convertFileSrc(track.path);
   const base = useProxyApiInDev() ? "/proxy-api" : (IS_TAURI ? API : "/proxy-api");
@@ -61,6 +82,8 @@ const initialState = {
   currentTrack: null,
   isPlaying: false,
   volume: getStoredVolume(),
+  volumeSnapEnabled: getStoredVolumeSnapEnabled(),
+  volumeCurve: getStoredVolumeCurve(),
   progress: 0,
   duration: 0,
   queue: [],
@@ -104,6 +127,8 @@ function playerReducer(state, action) {
       return { ...state, isPlaying: action.payload };
     case "SET_VOLUME":
       return { ...state, volume: action.payload };
+    case "SET_VOLUME_PREFERENCES":
+      return { ...state, ...action.payload };
     case "SET_PROGRESS":
       return { ...state, progress: action.payload };
     case "SET_DURATION":
@@ -916,18 +941,43 @@ export function PlayerProvider({ children }) {
     setQueueState({ queue: nextQueue, queueIndex: nextQueueIndex }, { resetShuffle: true });
   }, [getQueueCurrentIndex, setQueueState]);
 
-  const moveQueueItem = useCallback((fromIndex, toIndex) => {
+  const moveQueueItem = useCallback((fromIndex, toIndex, options = {}) => {
     const snapshot = stateRef.current;
     const currentIndex = getQueueCurrentIndex(snapshot);
     if (fromIndex === toIndex) return;
     if (fromIndex < 0 || toIndex < 0 || fromIndex >= snapshot.queue.length || toIndex >= snapshot.queue.length) return;
     if (fromIndex <= currentIndex || toIndex <= currentIndex) return;
 
+    if (snapshot.shuffle) {
+      const signature = getQueueSignature(snapshot);
+      const currentCycle = shuffleCycleRef.current.signature === signature
+        ? shuffleCycleRef.current.remainingIndices.filter((index) => index > currentIndex && index >= 0 && index < snapshot.queue.length)
+        : ensureShuffleCycle(snapshot).filter((index) => index > currentIndex);
+
+      const sourcePosition = currentCycle.indexOf(fromIndex);
+      const targetPosition = currentCycle.indexOf(toIndex);
+      if (sourcePosition === -1 || targetPosition === -1) return;
+
+      const nextCycle = [...currentCycle];
+      const [movedIndex] = nextCycle.splice(sourcePosition, 1);
+      const targetAfterRemoval = nextCycle.indexOf(toIndex);
+      if (targetAfterRemoval === -1) return;
+      const insertPosition = options.placement === "after" ? targetAfterRemoval + 1 : targetAfterRemoval;
+      nextCycle.splice(insertPosition, 0, movedIndex);
+
+      shuffleCycleRef.current = { signature, remainingIndices: nextCycle };
+      setQueueState({ queue: [...snapshot.queue] }, { resetShuffle: false });
+      return;
+    }
+
     const nextQueue = [...snapshot.queue];
     const [moved] = nextQueue.splice(fromIndex, 1);
-    nextQueue.splice(toIndex, 0, moved);
+    const insertIndex = options.placement === "after" ? toIndex + 1 : toIndex;
+    const destinationIndex = insertIndex > fromIndex ? insertIndex - 1 : insertIndex;
+    if (destinationIndex === fromIndex) return;
+    nextQueue.splice(destinationIndex, 0, moved);
     setQueueState({ queue: nextQueue }, { resetShuffle: true });
-  }, [getQueueCurrentIndex, setQueueState]);
+  }, [ensureShuffleCycle, getQueueCurrentIndex, getQueueSignature, setQueueState]);
 
   const getUpcomingQueue = useCallback((limit = 100) => {
     const snapshot = stateRef.current;
@@ -1549,6 +1599,18 @@ export function PlayerProvider({ children }) {
 
   const getCrossfade = useCallback(() => (IS_MOBILE ? 0 : crossfadeRef.current), []);
 
+  const setVolumeSnapEnabled = useCallback((enabled) => {
+    const nextEnabled = Boolean(enabled);
+    localStorage.setItem(PLAYER_VOLUME_SNAP_KEY, String(nextEnabled));
+    dispatch({ type: "SET_VOLUME_PREFERENCES", payload: { volumeSnapEnabled: nextEnabled } });
+  }, []);
+
+  const setVolumeCurve = useCallback((curve) => {
+    const nextCurve = Math.max(0.5, Math.min(2, Number(curve) || 1));
+    localStorage.setItem(PLAYER_VOLUME_CURVE_KEY, String(nextCurve));
+    dispatch({ type: "SET_VOLUME_PREFERENCES", payload: { volumeCurve: nextCurve } });
+  }, []);
+
   const value = {
     state,
     audioRef,
@@ -1565,6 +1627,8 @@ export function PlayerProvider({ children }) {
     startSeek,
     endSeek,
     setVolume,
+    setVolumeSnapEnabled,
+    setVolumeCurve,
     skipNext,
     skipPrev,
     toggleShuffle,
@@ -1596,3 +1660,5 @@ export function usePlayer() {
   if (!context) throw new Error("usePlayer must be used within PlayerProvider");
   return context;
 }
+
+
