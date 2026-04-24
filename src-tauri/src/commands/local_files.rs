@@ -1,12 +1,11 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::UNIX_EPOCH;
 use tauri::{AppHandle, Emitter};
 use rayon::prelude::*;
 use walkdir::WalkDir;
@@ -21,6 +20,7 @@ pub struct LocalFileInfo {
     pub path: String,
     pub file_name: String,
     pub file_hash: String,
+    pub modified_at: u64,
     pub title: String,
     pub artist: String,
     pub album: String,
@@ -67,6 +67,30 @@ struct AudioMeta {
     cover_path: Option<String>,
 }
 
+#[derive(Clone, Deserialize)]
+pub struct KnownLocalFile {
+    pub path: String,
+    #[serde(rename = "file_hash")]
+    pub _file_hash: String,
+    pub file_size: u64,
+    pub modified_at: u64,
+}
+
+struct CandidateFile {
+    path: PathBuf,
+    file_hash: Option<String>,
+    modified_at: u64,
+}
+
+fn file_modified_at(path: &Path) -> u64 {
+    fs::metadata(path)
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
 fn read_metadata(path: &Path, file_hash: &str) -> AudioMeta {
     use lofty::prelude::*;
     use lofty::probe::Probe;
@@ -97,10 +121,10 @@ fn read_metadata(path: &Path, file_hash: &str) -> AudioMeta {
     AudioMeta { title, artist, album, duration, cover_path }
 }
 
-fn process_file(path: &Path) -> Option<LocalFileInfo> {
+fn process_file(path: &Path, precomputed_hash: Option<String>, modified_at: u64) -> Option<LocalFileInfo> {
     let file_name = path.file_name()?.to_str()?.to_string();
     let file_size = fs::metadata(path).ok()?.len();
-    let file_hash = fast_hash(path, file_size).ok()?;
+    let file_hash = precomputed_hash.or_else(|| fast_hash(path, file_size).ok())?;
     let meta = read_metadata(path, &file_hash);
     let title = if meta.title.is_empty() {
         path.file_stem().and_then(|s| s.to_str()).unwrap_or("Unknown").to_string()
@@ -111,6 +135,7 @@ fn process_file(path: &Path) -> Option<LocalFileInfo> {
         path: path.to_string_lossy().to_string(),
         file_name,
         file_hash,
+        modified_at,
         title,
         artist: if meta.artist.is_empty() { "Unknown".into() } else { meta.artist },
         album: meta.album,
@@ -120,17 +145,59 @@ fn process_file(path: &Path) -> Option<LocalFileInfo> {
     })
 }
 
+fn emit_processed_batch(app: &AppHandle, batch: Vec<CandidateFile>, processed_total: &mut usize) {
+    if batch.is_empty() {
+        return;
+    }
+
+    let files: Vec<LocalFileInfo> = batch
+        .into_par_iter()
+        .filter_map(|candidate| process_file(&candidate.path, candidate.file_hash, candidate.modified_at))
+        .collect();
+
+    if files.is_empty() {
+        return;
+    }
+
+    *processed_total += files.len();
+    let _ = app.emit("local-files-batch", json!({
+        "files": files,
+        "total": *processed_total,
+    }));
+}
+
 #[tauri::command]
-pub async fn scan_local_directory(app: AppHandle, directory: String, known_hashes: Option<Vec<String>>) -> Result<Value, String> {
+pub async fn scan_local_directory(
+    app: AppHandle,
+    directory: String,
+    known_files: Option<Vec<KnownLocalFile>>,
+    allow_updates: Option<bool>,
+) -> Result<Value, String> {
     let dir_path = PathBuf::from(&directory);
     if !dir_path.exists() || !dir_path.is_dir() {
         return Err("Directory does not exist".into());
     }
 
-    let skip: HashSet<String> = known_hashes.unwrap_or_default().into_iter().collect();
+    let directory_prefix = dir_path.to_string_lossy().to_string();
+    let allow_updates = allow_updates.unwrap_or(false);
+    let known_files = known_files.unwrap_or_default();
+    let known_by_path: HashMap<String, KnownLocalFile> = known_files
+        .iter()
+        .cloned()
+        .map(|entry| (entry.path.clone(), entry))
+        .collect();
+    let known_paths_in_directory: HashSet<String> = known_files
+        .iter()
+        .filter(|entry| entry.path.starts_with(&directory_prefix))
+        .map(|entry| entry.path.clone())
+        .collect();
+    let mut processed_total = 0usize;
+    let mut changed_paths = Vec::new();
+    let mut seen_paths = HashSet::new();
+    let mut pending = Vec::with_capacity(BATCH_SIZE);
+    let _ = app.emit("local-files-batch", json!({ "files": [], "total": 0, "scanning": true }));
 
-    let mut candidates: Vec<(PathBuf, u64)> = Vec::new();
-    for entry in WalkDir::new(&dir_path).follow_links(true).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(&dir_path).follow_links(false).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
         if !path.is_file() { continue; }
         let ext = path.extension()
@@ -138,45 +205,51 @@ pub async fn scan_local_directory(app: AppHandle, directory: String, known_hashe
             .map(|e| e.to_lowercase())
             .unwrap_or_default();
         if !AUDIO_EXTENSIONS.contains(&ext.as_str()) { continue; }
+
+        let path_string = path.to_string_lossy().to_string();
+        seen_paths.insert(path_string.clone());
         let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-        if !skip.is_empty() {
-            if let Ok(h) = fast_hash(path, size) {
-                if skip.contains(&h) { continue; }
+        let modified_at = file_modified_at(path);
+
+        if let Some(existing) = known_by_path.get(&path_string) {
+            if existing.file_size == size && existing.modified_at == modified_at {
+                continue;
+            }
+
+            if !allow_updates {
+                changed_paths.push(path_string);
+                continue;
             }
         }
-        candidates.push((path.to_path_buf(), size));
+
+        pending.push(CandidateFile {
+            path: path.to_path_buf(),
+            file_hash: None,
+            modified_at,
+        });
+
+        if pending.len() >= BATCH_SIZE {
+            emit_processed_batch(&app, std::mem::take(&mut pending), &mut processed_total);
+        }
     }
 
-    let total_files = candidates.len();
-    let _ = app.emit("local-files-batch", json!({ "files": [], "total": 0, "scanning": total_files }));
+    emit_processed_batch(&app, pending, &mut processed_total);
 
-    let counter = AtomicU32::new(0);
-    let batch_buf: Arc<Mutex<Vec<LocalFileInfo>>> = Arc::new(Mutex::new(Vec::with_capacity(BATCH_SIZE)));
-    let app_ref = &app;
-    let counter_ref = &counter;
-    let batch_ref = &batch_buf;
+    let removed_paths: Vec<String> = known_paths_in_directory
+        .into_iter()
+        .filter(|path| !seen_paths.contains(path))
+        .collect();
 
-    candidates.par_iter().for_each(|(path, _)| {
-        if let Some(info) = process_file(path) {
-            let cnt = counter_ref.fetch_add(1, Ordering::Relaxed) + 1;
-            let mut buf = batch_ref.lock().unwrap();
-            buf.push(info);
-            if buf.len() >= BATCH_SIZE {
-                let _ = app_ref.emit("local-files-batch", json!({ "files": &*buf, "total": cnt }));
-                buf.clear();
-            }
-        }
+    let summary = json!({
+        "directory": directory,
+        "count": processed_total,
+        "changedCount": changed_paths.len(),
+        "changedPaths": changed_paths,
+        "removedPaths": removed_paths,
     });
 
-    let count = counter.load(Ordering::Relaxed);
-    let mut remaining = batch_buf.lock().unwrap();
-    if !remaining.is_empty() {
-        let _ = app.emit("local-files-batch", json!({ "files": &*remaining, "total": count }));
-        remaining.clear();
-    }
-
-    let _ = app.emit("local-scan-complete", json!({ "directory": directory, "count": count }));
-    Ok(json!({ "directory": directory, "count": count }))
+    let _ = app.emit("local-scan-complete", summary.clone());
+    Ok(summary)
 }
 
 #[tauri::command]
@@ -210,6 +283,7 @@ pub async fn hash_single_file(file_path: String) -> Result<Value, String> {
         "path": file_path,
         "fileName": file_name,
         "fileHash": hash,
+        "modifiedAt": file_modified_at(&path),
         "title": if meta.title.is_empty() { path.file_stem().and_then(|s| s.to_str()).unwrap_or("Unknown").to_string() } else { meta.title },
         "artist": if meta.artist.is_empty() { "Unknown".to_string() } else { meta.artist },
         "album": meta.album,

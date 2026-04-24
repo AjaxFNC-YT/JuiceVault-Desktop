@@ -62,7 +62,13 @@ function Songs({ onInfo, onAddToPlaylist }) {
       list = searchCollection(
         list,
         query,
-        (song) => [song.title, song.artist, song.album, song.file_name, ...(song.alt_names || [])],
+        (song) => [
+          { value: song.title, mode: "fuzzy", priority: 0 },
+          { value: song.file_name, mode: "fuzzy", priority: 1 },
+          ...(song.alt_names || []).map((name) => ({ value: name, mode: "fuzzy", priority: 2 })),
+          { value: song.artist, mode: "exact", priority: 3 },
+          { value: song.album, mode: "exact", priority: 4 },
+        ],
         { fuzzy: fuzzySearch },
       );
     }
@@ -74,6 +80,7 @@ function Songs({ onInfo, onAddToPlaylist }) {
         return false;
       });
     }
+    if (query.trim()) return list;
     return [...list].sort((a, b) => {
       if (sortBy === "a-z") return (a.title || "").localeCompare(b.title || "");
       if (sortBy === "z-a") return (b.title || "").localeCompare(a.title || "");
@@ -134,7 +141,7 @@ function Songs({ onInfo, onAddToPlaylist }) {
       </div>
 
       {filtered.length > 0 ? (
-        <SongList songs={filtered} viewMode={viewMode} onViewChange={setViewMode} onInfo={onInfo} onAddToPlaylist={onAddToPlaylist} likedIds={new Set(songs.map((s) => s.id))} />
+        <SongList songs={filtered} viewMode={viewMode} onViewChange={setViewMode} onInfo={onInfo} onAddToPlaylist={onAddToPlaylist} likedIds={new Set(songs.map((s) => s.id))} playSource="library" />
       ) : query.trim() ? (
         <p className="text-center text-white/25 py-16 text-sm">No matches found</p>
       ) : (

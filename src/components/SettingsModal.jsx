@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { X, Check, SlidersHorizontal, FolderSync, HardDrive, FolderPlus, Trash2, RefreshCw } from "lucide-react";
+import { X, Check, SlidersHorizontal, FolderSync, HardDrive, FolderPlus, Trash2, RefreshCw, Download } from "lucide-react";
 import { useTheme, THEMES, hexToRgb } from "@/stores/themeStore";
 import { useLocalFiles } from "@/stores/localFilesStore";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -8,6 +8,10 @@ import { updateUserPreferences } from "@/lib/api";
 import { useIsMobile } from "@/hooks/useMobile";
 import { getTitlebarStyle, setTitlebarStyle, IS_TAURI } from "@/lib/platform";
 import { getFuzzySearchEnabled, setFuzzySearchEnabled } from "@/lib/search";
+
+const SKIPPED_UPDATE_VERSION_KEY = "skipped_update_version";
+const LAST_UPDATE_INFO_KEY = "last_update_info";
+const UPDATE_STATE_EVENT = "juicevault-update-state";
 
 function Toggle({ on, onToggle, color = "bg-brand-red" }) {
   return (
@@ -29,6 +33,53 @@ function SettingsModal({ onClose, discordRpc, setDiscordRpc, onOpenPlayerPrefs }
   const [mergeSE, setMergeSE] = useState(localStorage.getItem("mergeSessionEdits") === "true");
   const [titlebarStyle, setTitlebarStyleState] = useState(getTitlebarStyle());
   const [fuzzySearch, setFuzzySearchState] = useState(getFuzzySearchEnabled());
+  const [skippedUpdateVersion, setSkippedUpdateVersion] = useState(() => localStorage.getItem(SKIPPED_UPDATE_VERSION_KEY));
+  const [availableUpdate, setAvailableUpdate] = useState(() => {
+    try {
+      const raw = localStorage.getItem(LAST_UPDATE_INFO_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    const syncUpdateState = () => {
+      setSkippedUpdateVersion(localStorage.getItem(SKIPPED_UPDATE_VERSION_KEY));
+      try {
+        const raw = localStorage.getItem(LAST_UPDATE_INFO_KEY);
+        setAvailableUpdate(raw ? JSON.parse(raw) : null);
+      } catch {
+        setAvailableUpdate(null);
+      }
+    };
+
+    window.addEventListener(UPDATE_STATE_EVENT, syncUpdateState);
+    window.addEventListener("storage", syncUpdateState);
+    return () => {
+      window.removeEventListener(UPDATE_STATE_EVENT, syncUpdateState);
+      window.removeEventListener("storage", syncUpdateState);
+    };
+  }, []);
+
+  const updateVersion = availableUpdate?.latestVersion || skippedUpdateVersion || null;
+  const updateSize = useMemo(() => {
+    const rawSize = availableUpdate?.release?.size;
+    if (!rawSize) return "";
+    const size = Number(rawSize);
+    if (!Number.isFinite(size)) return "";
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(0)} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  }, [availableUpdate]);
+
+  const handleShowSkippedUpdate = () => {
+    try {
+      const raw = localStorage.getItem(LAST_UPDATE_INFO_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      window.showUpdateModal?.(parsed);
+    } catch {}
+  };
 
   const handleAddSource = async () => {
     try {
@@ -69,6 +120,45 @@ function SettingsModal({ onClose, discordRpc, setDiscordRpc, onOpenPlayerPrefs }
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-5 space-y-6" style={isMobile ? { paddingBottom: "max(20px, env(safe-area-inset-bottom, 20px))" } : undefined}>
+
+          {updateVersion && (
+            <section>
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-white/25 mb-3">Update</p>
+              <div className="w-full flex items-center justify-between rounded-xl bg-white/[0.03] border border-white/[0.06] px-4 py-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <Download size={18} className="text-white/40 flex-shrink-0" />
+                  <div className="text-left min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-[13px] font-medium text-white/80">Update Available</p>
+                      <span
+                        className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                        style={{
+                          background: `rgba(${a1}, 0.14)`,
+                          border: `1px solid rgba(${a1}, 0.18)`,
+                          color: theme.accent[1],
+                        }}
+                      >
+                        v{updateVersion}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-white/30">
+                      {updateSize ? `New desktop build ready • ${updateSize}` : "New desktop build ready"}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={handleShowSkippedUpdate}
+                  className="ml-3 rounded-lg px-3 py-1.5 text-[11px] font-semibold text-white transition-all hover:brightness-110 flex-shrink-0"
+                  style={{
+                    background: `linear-gradient(135deg, rgba(${a1}, 0.3), rgba(${a0}, 0.24))`,
+                    border: `1px solid rgba(${a1}, 0.18)`,
+                  }}
+                >
+                  Update Now
+                </button>
+              </div>
+            </section>
+          )}
 
           <section>
             <p className="text-[11px] font-semibold uppercase tracking-widest text-white/25 mb-3">Theme</p>

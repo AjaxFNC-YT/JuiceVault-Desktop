@@ -186,7 +186,7 @@ function Overview({ user }) {
                 const song = entry.song || {};
                 const track = { id: entry.songId, title: song.title, artist: song.artist, cover: song.cover };
                 const allTracks = topSongs.slice(0, 10).map((e) => ({ id: e.songId, title: e.song?.title, artist: e.song?.artist, cover: e.song?.cover }));
-                playTrack(track, allTracks, i);
+                playTrack(track, allTracks, i, "library");
               }} />
             ))}
           </div>

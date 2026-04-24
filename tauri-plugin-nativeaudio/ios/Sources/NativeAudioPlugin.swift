@@ -156,10 +156,12 @@ class AudioEngine {
         currentArtworkUrl = artworkUrl
         cachedArtwork = nil
 
+        // Start artwork fetch in parallel with audio download
+        fetchArtwork(from: artworkUrl)
+
         fetchAudioFile(from: url) { [weak self] localUrl in
             guard let self = self, let localUrl = localUrl else { return }
             self.loadAndPlay(fileUrl: localUrl)
-            self.fetchArtwork(from: artworkUrl)
         }
     }
 
@@ -198,7 +200,9 @@ class AudioEngine {
 
     private func scheduleFullFile(_ file: AVAudioFile, on player: AVAudioPlayerNode) {
         file.framePosition = 0
-        player.scheduleFile(file, at: nil) { [weak self] in
+        // .dataPlayedBack ensures the callback fires after actual playback ends,
+        // not when the data is merely scheduled into the hardware buffer.
+        player.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             DispatchQueue.main.async { self?.onTrackFinished() }
         }
     }
@@ -331,9 +335,18 @@ class AudioEngine {
         NotificationCenter.default.removeObserver(self)
     }
 
+    private static var audioCache = [String: URL]()
+
     private func fetchAudioFile(from urlString: String, completion: @escaping (URL?) -> Void) {
         guard let url = URL(string: urlString) else { completion(nil); return }
         if url.isFileURL { completion(url); return }
+
+        // Return cached file if available
+        if let cached = AudioEngine.audioCache[urlString],
+           FileManager.default.fileExists(atPath: cached.path) {
+            DispatchQueue.main.async { completion(cached) }
+            return
+        }
 
         URLSession.shared.downloadTask(with: url) { tmp, _, err in
             guard let tmp = tmp, err == nil else {
@@ -343,6 +356,7 @@ class AudioEngine {
             let dest = FileManager.default.temporaryDirectory
                 .appendingPathComponent(UUID().uuidString + ".caf")
             try? FileManager.default.moveItem(at: tmp, to: dest)
+            AudioEngine.audioCache[urlString] = dest
             DispatchQueue.main.async { completion(dest) }
         }.resume()
     }
@@ -403,17 +417,31 @@ class AudioEngine {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
+    private static var artworkCache = [String: MPMediaItemArtwork]()
+
     private func fetchArtwork(from urlString: String?) {
         guard let str = urlString, let url = URL(string: str) else { return }
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-            guard let data = data, let img = UIImage(data: data) else { return }
+
+        // Use cached artwork if available
+        if let cached = AudioEngine.artworkCache[str] {
+            cachedArtwork = cached
+            publishNowPlaying()
+            return
+        }
+
+        URLSession.shared.dataTask(with: url) { [weak self] data, response, _ in
+            guard let data = data,
+                  let img = UIImage(data: data),
+                  img.size.width > 0 else {
+                print("[NativeAudio] artwork fetch failed for: \(str)")
+                return
+            }
             let art = MPMediaItemArtwork(boundsSize: img.size) { _ in img }
+            AudioEngine.artworkCache[str] = art
             DispatchQueue.main.async {
-                self?.cachedArtwork = art
-                if var info = MPNowPlayingInfoCenter.default().nowPlayingInfo {
-                    info[MPMediaItemPropertyArtwork] = art
-                    MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-                }
+                guard let self = self else { return }
+                self.cachedArtwork = art
+                self.publishNowPlaying()
             }
         }.resume()
     }

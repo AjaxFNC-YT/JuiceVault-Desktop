@@ -24,6 +24,10 @@ import { useIsMobile } from "@/hooks/useMobile";
 import { IS_TAURI } from "@/lib/platform";
 import { useTheme } from "@/stores/themeStore";
 
+const SKIPPED_UPDATE_VERSION_KEY = "skipped_update_version";
+const LAST_UPDATE_INFO_KEY = "last_update_info";
+const UPDATE_STATE_EVENT = "juicevault-update-state";
+
 const pageFade = {
   initial: { opacity: 0, y: 12 },
   animate: { opacity: 1, y: 0 },
@@ -45,10 +49,28 @@ function Dashboard({ user, onLogout }) {
   const [discordRpc, setDiscordRpc] = useState(() => localStorage.getItem("discordRpc") !== "false");
   const [mediaViewing, setMediaViewing] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [hasUpdateNotice, setHasUpdateNotice] = useState(false);
   useEffect(() => { localStorage.setItem("discordRpc", String(discordRpc)); updateUserPreferences({ discordRpc }).catch(() => {}); }, [discordRpc]);
   useDiscordRPC(discordRpc, { activePage, playlistName: playlistMeta.name, mediaViewing });
   const [playlistRefresh, setPlaylistRefresh] = useState(0);
   const refreshPlaylists = () => setPlaylistRefresh((n) => n + 1);
+
+  useEffect(() => {
+    const syncUpdateNotice = () => {
+      const updateInfo = localStorage.getItem(LAST_UPDATE_INFO_KEY);
+      const skipped = localStorage.getItem(SKIPPED_UPDATE_VERSION_KEY);
+      setHasUpdateNotice(Boolean(updateInfo || skipped));
+    };
+
+    syncUpdateNotice();
+    window.addEventListener(UPDATE_STATE_EVENT, syncUpdateNotice);
+    window.addEventListener("storage", syncUpdateNotice);
+    return () => {
+      window.removeEventListener(UPDATE_STATE_EVENT, syncUpdateNotice);
+      window.removeEventListener("storage", syncUpdateNotice);
+    };
+  }, []);
+
   const handleNavigate = (page, extra) => {
     if (page.startsWith("playlist:")) {
       const id = page.replace("playlist:", "");
@@ -137,6 +159,7 @@ function Dashboard({ user, onLogout }) {
                   onCreatePlaylist={() => setShowCreatePlaylist(true)}
                   refreshTrigger={playlistRefresh}
                   onSettings={() => setShowSettings(true)}
+                  hasUpdateNotice={hasUpdateNotice}
                   mobile
                   onClose={() => setSidebarOpen(false)}
                 />
@@ -152,6 +175,7 @@ function Dashboard({ user, onLogout }) {
             onCreatePlaylist={() => setShowCreatePlaylist(true)}
             refreshTrigger={playlistRefresh}
             onSettings={() => setShowSettings(true)}
+            hasUpdateNotice={hasUpdateNotice}
           />
         )}
 

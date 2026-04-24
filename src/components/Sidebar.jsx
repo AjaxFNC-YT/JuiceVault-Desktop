@@ -20,7 +20,7 @@ const LIBRARY_ITEMS = [
   { icon: HardDrive, label: "Local Files" },
 ];
 
-function Sidebar({ user, onLogout, active, onNavigate, onCreatePlaylist, refreshTrigger, onSettings, mobile, onClose }) {
+function Sidebar({ user, onLogout, active, onNavigate, onCreatePlaylist, refreshTrigger, onSettings, mobile, onClose, hasUpdateNotice }) {
   const { theme } = useTheme();
   const [playlists, setPlaylists] = useState([]);
 
@@ -86,7 +86,9 @@ function Sidebar({ user, onLogout, active, onNavigate, onCreatePlaylist, refresh
             <div className="min-w-0 flex-1">
               <p className="truncate text-[14px] font-semibold text-white/80">{user?.displayName || user?.username}</p>
             </div>
-            <button onClick={() => { onClose?.(); onSettings?.(); }} className="text-white/30 active:text-white/60 p-2"><Settings size={18} /></button>
+            <IconButtonWithBadge onClick={() => { onClose?.(); onSettings?.(); }} title="Settings" mobile activeClassName="text-white/30 active:text-white/60 p-2" hasBadge={hasUpdateNotice}>
+              <Settings size={18} />
+            </IconButtonWithBadge>
             <button onClick={onLogout} className="text-white/30 active:text-brand-red p-2"><LogOut size={18} /></button>
           </div>
         </div>
@@ -152,13 +154,14 @@ function Sidebar({ user, onLogout, active, onNavigate, onCreatePlaylist, refresh
               {user?.displayName || user?.username}
             </p>
           </div>
-          <button
+          <IconButtonWithBadge
             onClick={onSettings}
-            className="text-white/25 hover:text-white/50 transition-colors"
             title="Settings"
+            className="text-white/25 hover:text-white/50 transition-colors"
+            hasBadge={hasUpdateNotice}
           >
             <Settings size={16} />
-          </button>
+          </IconButtonWithBadge>
           <button
             onClick={onLogout}
             className="text-white/25 hover:text-brand-red transition-colors"
@@ -169,6 +172,25 @@ function Sidebar({ user, onLogout, active, onNavigate, onCreatePlaylist, refresh
         </div>
       </div>
     </aside>
+  );
+}
+
+function IconButtonWithBadge({ children, onClick, title, className = "", activeClassName = "", hasBadge, mobile = false }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`relative ${mobile ? activeClassName : className}`}
+      title={title}
+    >
+      {children}
+      {hasBadge && (
+        <span className="pointer-events-none absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-bold text-white"
+          style={{ background: "linear-gradient(135deg, #ef4444, #f97316)", boxShadow: "0 0 0 2px rgba(10,10,12,0.9)" }}
+        >
+          1
+        </span>
+      )}
+    </button>
   );
 }
 

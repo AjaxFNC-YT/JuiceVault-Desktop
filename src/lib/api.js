@@ -95,8 +95,8 @@ export async function getLikedSongs() {
   return authedInvoke("get_liked_songs", (accessToken) => ({ accessToken }));
 }
 
-export async function logListen(songId, duration, completed) {
-  return authedInvoke("log_listen", (accessToken) => ({ accessToken, songId, duration, completed }));
+export async function logListen(songId, duration, completed, source = "library", playlistId = null) {
+  return authedInvoke("log_listen", (accessToken) => ({ accessToken, songId, duration, completed, source, playlistId }));
 }
 
 export async function getAllMedia() {
@@ -127,8 +127,8 @@ export async function deletePlaylist(playlistId) {
   return authedInvoke("delete_playlist", (accessToken) => ({ accessToken, playlistId }));
 }
 
-export async function addSongsToPlaylist(playlistId, songIds) {
-  return authedInvoke("add_songs_to_playlist", (accessToken) => ({ accessToken, playlistId, songIds }));
+export async function addSongsToPlaylist(playlistId, songIds, localFiles = null) {
+  return authedInvoke("add_songs_to_playlist", (accessToken) => ({ accessToken, playlistId, songIds, localFiles }));
 }
 
 export async function removeSongFromPlaylist(playlistId, songId) {
@@ -175,8 +175,8 @@ export async function updateUserPreferences(preferences) {
   return authedInvoke("update_user_preferences", (accessToken) => ({ accessToken, preferences }));
 }
 
-export async function scanLocalDirectory(directory, knownHashes = null) {
-  return invoke("scan_local_directory", { directory, knownHashes });
+export async function scanLocalDirectory(directory, knownFiles = null, allowUpdates = false) {
+  return invoke("scan_local_directory", { directory, knownFiles, allowUpdates });
 }
 
 export async function hashSingleFile(filePath) {
@@ -195,8 +195,16 @@ export async function checkForUpdate() {
   return invoke("check_for_update");
 }
 
-export async function fetchSongEras(songIds) {
-  return invoke("fetch_song_eras", { songIds });
+export async function fetchSongEras(songIds, batchSize = 100) {
+  if (!Array.isArray(songIds) || songIds.length === 0) return {};
+
+  const merged = {};
+  for (let i = 0; i < songIds.length; i += batchSize) {
+    const chunk = songIds.slice(i, i + batchSize);
+    const res = await invoke("fetch_song_eras", { songIds: chunk });
+    Object.assign(merged, res || {});
+  }
+  return merged;
 }
 
 export async function uploadCoverTemp(fileHash) {

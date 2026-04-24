@@ -4,8 +4,7 @@ import { Radio as RadioIcon, Users, SkipForward, Play, Pause, Music2 } from "luc
 import { getRadioNowPlaying, getRadioSchedule, voteSkipRadio } from "@/lib/api";
 import { usePlayer } from "@/stores/playerStore";
 import { useTheme, hexToRgb } from "@/stores/themeStore";
-
-const CDN = "https://api.juicevault.xyz";
+import { toApiUrl } from "@/lib/platform";
 
 function fmt(s) {
   if (!s || !isFinite(s) || s < 0) return "0:00";
@@ -67,8 +66,8 @@ function Radio() {
   };
 
   const current = state.isRadio ? state.currentTrack : nowPlaying;
-  const cover = current?.cover ? `${CDN}${current.cover}` : null;
-  const nextCover = nextSong?.cover ? `${CDN}${nextSong.cover}` : null;
+  const cover = current?.cover ? toApiUrl(current.cover) : null;
+  const nextCover = nextSong?.cover ? toApiUrl(nextSong.cover) : null;
 
   return (
     <motion.div className="px-4 md:px-8 py-6" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
@@ -181,7 +180,7 @@ function Radio() {
               <p className="text-[12px] text-white/20 mb-2">Schedule ({upcoming.length} upcoming)</p>
               <div className="flex flex-col gap-0.5">
                 {upcoming.map((song, i) => {
-                  const songCover = song.cover ? `${CDN}${song.cover}` : null;
+            const songCover = song.cover ? toApiUrl(song.cover) : null;
                   return (
                     <div key={`${song.id}-${i}`} className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/[0.03] transition-colors">
                       <span className="text-[11px] text-white/15 w-5 text-right tabular-nums">{i + 1}</span>

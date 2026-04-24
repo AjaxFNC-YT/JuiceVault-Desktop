@@ -2,6 +2,7 @@ import { createContext, useContext, useReducer, useRef, useCallback, useEffect, 
 import { logListen, getRadioNowPlaying, getCurrentUser, updateUserPreferences } from "@/lib/api";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { IS_TAURI } from "@/lib/platform";
 
 const API = "https://api.juicevault.xyz";
 const IS_IOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -12,6 +13,27 @@ const EARLY_SKIP_WINDOW_SECONDS = 10;
 const MAX_SHUFFLE_MEMORY_TRACKS = 750;
 const MAX_SESSION_HISTORY = 250;
 const PLAYER_VOLUME_KEY = "player.volume";
+const COMPLETE_LISTEN_RATIO = 0.7;
+const MAX_TRUSTED_PROGRESS_DELTA_SECONDS = 2.5;
+const DEFAULT_PLAYBACK_SOURCE = "library";
+
+function isRetryableListenError(error) {
+  const message = typeof error === "string" ? error : error?.message || String(error || "");
+  const normalized = message.toLowerCase();
+  return normalized.includes("network error")
+    || normalized.includes("timed out")
+    || normalized.includes("timeout")
+    || normalized.includes("failed to reach")
+    || normalized.includes("invalid token")
+    || normalized.includes("expired")
+    || normalized.includes("unauthorized");
+}
+
+function useProxyApiInDev() {
+  if (typeof window === "undefined") return false;
+  const { protocol, hostname, port } = window.location;
+  return protocol.startsWith("http") && (hostname === "localhost" || hostname === "127.0.0.1") && port === "1420";
+}
 
 function getStoredVolume() {
   try {
@@ -27,7 +49,12 @@ function getStoredVolume() {
 
 function getStreamUrl(track) {
   if (track?.local && track?.path) return convertFileSrc(track.path);
-  return `${API}/music/stream/${track.id}?src=app`;
+  const base = useProxyApiInDev() ? "/proxy-api" : (IS_TAURI ? API : "/proxy-api");
+  return `${base}/music/stream/${track.id}?src=app`;
+}
+
+function getRadioStreamUrl() {
+  return `${useProxyApiInDev() ? "/proxy-api" : (IS_TAURI ? API : "/proxy-api")}/radio/stream`;
 }
 
 const initialState = {
@@ -40,14 +67,39 @@ const initialState = {
   queueIndex: -1,
   shuffle: false,
   repeat: "off",
+  queueSource: DEFAULT_PLAYBACK_SOURCE,
+  queuePrompt: null,
   isRadio: false,
   radioData: null,
 };
 
+function createPlaybackContextSnapshot(snapshot) {
+  return {
+    queue: Array.isArray(snapshot.queue) ? snapshot.queue : [],
+    queueIndex: Number.isInteger(snapshot.queueIndex) ? snapshot.queueIndex : -1,
+    queueSource: snapshot.queueSource || DEFAULT_PLAYBACK_SOURCE,
+    playlistId: snapshot.currentTrack?.playlistId || null,
+  };
+}
+
+function normalizePlaybackSource(source) {
+  const allowed = new Set(["library", "playlist", "search", "radio", "queue"]);
+  return allowed.has(source) ? source : DEFAULT_PLAYBACK_SOURCE;
+}
+
 function playerReducer(state, action) {
   switch (action.type) {
     case "PLAY_TRACK":
-      return { ...state, currentTrack: action.payload.track, queue: action.payload.queue, queueIndex: action.payload.index, isPlaying: true, progress: 0, duration: 0 };
+      return {
+        ...state,
+        currentTrack: action.payload.track,
+        queue: action.payload.queue,
+        queueIndex: action.payload.index,
+        queueSource: action.payload.queueSource ?? state.queueSource,
+        isPlaying: true,
+        progress: 0,
+        duration: 0,
+      };
     case "SET_PLAYING":
       return { ...state, isPlaying: action.payload };
     case "SET_VOLUME":
@@ -68,6 +120,10 @@ function playerReducer(state, action) {
       return { ...state, isRadio: false, radioData: null };
     case "SET_RADIO_DATA":
       return { ...state, radioData: action.payload };
+    case "SET_QUEUE_STATE":
+      return { ...state, ...action.payload };
+    case "SET_QUEUE_PROMPT":
+      return { ...state, queuePrompt: action.payload };
     default:
       return state;
   }
@@ -78,8 +134,6 @@ const PlayerContext = createContext(null);
 export function PlayerProvider({ children }) {
   const [state, dispatch] = useReducer(playerReducer, initialState);
   const audioRef = useRef(null);
-  const listenStartRef = useRef(0);
-
   const analyserRef = useRef(null);
   const audioCtxRef = useRef(null);
   const outputGainRef = useRef(null);
@@ -126,6 +180,7 @@ export function PlayerProvider({ children }) {
   const playbackWatchdogRef = useRef(null);
   const endGuardRef = useRef(false);
   const stalledNearEndRef = useRef(0);
+  const basePlaybackContextRef = useRef(null);
 
   if (!audioRef.current) {
     audioRef.current = new Audio();
@@ -307,39 +362,13 @@ export function PlayerProvider({ children }) {
     shuffleCycleRef.current = { signature: "", remainingIndices: [] };
   }, []);
 
-  const getWeightedShuffleIndex = useCallback((snapshot) => {
-    if (!snapshot.queue.length) return -1;
+  const getQueueSignature = useCallback((snapshot) => (
+    snapshot.queue.map((track, index) => `${index}:${getQueueTrackKey(track) || `unknown-${index}`}`).join("||")
+  ), [getQueueTrackKey]);
 
-    const currentIndex = getQueueCurrentIndex(snapshot);
-    if (snapshot.queue.length === 1) return currentIndex >= 0 ? currentIndex : 0;
-
-    const queueSignature = snapshot.queue
-      .map((track, index) => `${index}:${getQueueTrackKey(track) || `unknown-${index}`}`)
-      .join("||");
-
-    if (shuffleCycleRef.current.signature !== queueSignature) {
-      shuffleCycleRef.current = {
-        signature: queueSignature,
-        remainingIndices: snapshot.queue.map((_, index) => index),
-      };
-    }
-
-    shuffleCycleRef.current.remainingIndices = shuffleCycleRef.current.remainingIndices
-      .filter((index) => index >= 0 && index < snapshot.queue.length);
-
-    if (currentIndex >= 0) {
-      shuffleCycleRef.current.remainingIndices = shuffleCycleRef.current.remainingIndices
-        .filter((index) => index !== currentIndex);
-    }
-
-    if (!shuffleCycleRef.current.remainingIndices.length) {
-      shuffleCycleRef.current.remainingIndices = snapshot.queue
-        .map((_, index) => index)
-        .filter((index) => index !== currentIndex);
-    }
-
+  const getShuffleWeights = useCallback((snapshot, candidateIndices) => {
     const now = Date.now();
-    const weightedCandidates = shuffleCycleRef.current.remainingIndices.map((index) => {
+    return candidateIndices.map((index) => {
       const track = snapshot.queue[index];
       const key = getQueueTrackKey(track);
       const stats = key ? shuffleMemoryRef.current[key] || {} : {};
@@ -364,18 +393,67 @@ export function PlayerProvider({ children }) {
 
       return { index, weight: Math.max(0.02, weight) };
     });
+  }, [getQueueTrackKey]);
 
-    const totalWeight = weightedCandidates.reduce((sum, candidate) => sum + candidate.weight, 0);
-    if (totalWeight <= 0) return shuffleCycleRef.current.remainingIndices[0] ?? -1;
+  const buildWeightedShuffleOrder = useCallback((snapshot, candidateIndices) => {
+    const remaining = [...candidateIndices];
+    const order = [];
 
-    let cursor = Math.random() * totalWeight;
-    for (const candidate of weightedCandidates) {
-      cursor -= candidate.weight;
-      if (cursor <= 0) return candidate.index;
+    while (remaining.length) {
+      const weightedCandidates = getShuffleWeights(snapshot, remaining);
+      const totalWeight = weightedCandidates.reduce((sum, candidate) => sum + candidate.weight, 0);
+      const fallbackIndex = weightedCandidates[weightedCandidates.length - 1]?.index ?? remaining[0];
+
+      let selectedIndex = fallbackIndex;
+      if (totalWeight > 0) {
+        let cursor = Math.random() * totalWeight;
+        for (const candidate of weightedCandidates) {
+          cursor -= candidate.weight;
+          if (cursor <= 0) {
+            selectedIndex = candidate.index;
+            break;
+          }
+        }
+      }
+
+      order.push(selectedIndex);
+      remaining.splice(remaining.indexOf(selectedIndex), 1);
     }
 
-    return weightedCandidates[weightedCandidates.length - 1]?.index ?? -1;
-  }, [getQueueCurrentIndex, getQueueTrackKey]);
+    return order;
+  }, [getShuffleWeights]);
+
+  const ensureShuffleCycle = useCallback((snapshot) => {
+    if (!snapshot.shuffle || !snapshot.queue.length) {
+      resetShuffleCycle();
+      return [];
+    }
+
+    const currentIndex = getQueueCurrentIndex(snapshot);
+    const signature = getQueueSignature(snapshot);
+
+    let remainingIndices = shuffleCycleRef.current.signature === signature
+      ? shuffleCycleRef.current.remainingIndices.filter((index) => index >= 0 && index < snapshot.queue.length)
+      : [];
+
+    if (currentIndex >= 0) {
+      remainingIndices = remainingIndices.filter((index) => index !== currentIndex);
+    }
+
+    if (!remainingIndices.length) {
+      remainingIndices = buildWeightedShuffleOrder(
+        snapshot,
+        snapshot.queue.map((_, index) => index).filter((index) => index !== currentIndex),
+      );
+    }
+
+    shuffleCycleRef.current = { signature, remainingIndices };
+    return remainingIndices;
+  }, [buildWeightedShuffleOrder, getQueueCurrentIndex, getQueueSignature, resetShuffleCycle]);
+
+  const getWeightedShuffleIndex = useCallback((snapshot) => {
+    return ensureShuffleCycle(snapshot)[0] ?? -1;
+  }, [ensureShuffleCycle]);
 
   const getNextQueueIndex = useCallback((snapshot) => {
     if (!snapshot.queue.length) return -1;
@@ -393,35 +471,6 @@ export function PlayerProvider({ children }) {
     }
     return nextIdx;
   }, [getQueueCurrentIndex, getWeightedShuffleIndex]);
-
-  const finishTrack = useCallback(() => {
-    const snapshot = stateRef.current;
-    if (snapshot.isRadio || endGuardRef.current) return;
-    endGuardRef.current = true;
-    stalledNearEndRef.current = 0;
-
-    if (snapshot.currentTrack) {
-      recordTrackShuffleOutcome(snapshot.currentTrack, snapshot, { completed: true });
-    }
-
-    if (snapshot.currentTrack && !snapshot.currentTrack.local) {
-      const elapsed = Math.floor(audio.currentTime - listenStartRef.current);
-      logListen(snapshot.currentTrack.id, elapsed, true).catch(() => {});
-    }
-
-    if (snapshot.repeat === "one") {
-      audio.currentTime = 0;
-      audio.playbackRate = 1;
-      applyDesktopPlaybackState();
-      audio.play().catch(() => {});
-    } else {
-      skipNextRef.current?.({ recordCurrentOutcome: false });
-    }
-
-    window.setTimeout(() => {
-      endGuardRef.current = false;
-    }, 200);
-  }, [applyDesktopPlaybackState, audio, recordTrackShuffleOutcome]);
 
   const doCrossfade = useCallback((newSrc, targetVolume, overrideDuration) => {
     const a = audioRef.current;
@@ -595,39 +644,341 @@ export function PlayerProvider({ children }) {
   const skipPrevRef = useRef(null);
   const stateRef = useRef(state);
   stateRef.current = state;
+  const listenLogStateRef = useRef({ trackKey: null, logged: false });
+  const listenMetricsRef = useRef({
+    trackKey: null,
+    lastPosition: null,
+    listenedSeconds: 0,
+    coveredSeconds: 0,
+    segments: [],
+  });
+
+  const mergeListenSegment = useCallback((start, end) => {
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return;
+    const segmentStart = Math.max(0, Math.min(start, end));
+    const segmentEnd = Math.max(0, Math.max(start, end));
+    if (segmentEnd <= segmentStart) return;
+
+    const metrics = listenMetricsRef.current;
+    const nextSegments = [];
+    let pendingStart = segmentStart;
+    let pendingEnd = segmentEnd;
+    let inserted = false;
+
+    for (const [existingStart, existingEnd] of metrics.segments) {
+      if (existingEnd < pendingStart) {
+        nextSegments.push([existingStart, existingEnd]);
+      } else if (pendingEnd < existingStart) {
+        if (!inserted) {
+          nextSegments.push([pendingStart, pendingEnd]);
+          inserted = true;
+        }
+        nextSegments.push([existingStart, existingEnd]);
+      } else {
+        pendingStart = Math.min(pendingStart, existingStart);
+        pendingEnd = Math.max(pendingEnd, existingEnd);
+      }
+    }
+
+    if (!inserted) nextSegments.push([pendingStart, pendingEnd]);
+
+    metrics.segments = nextSegments;
+    metrics.coveredSeconds = nextSegments.reduce((sum, [rangeStart, rangeEnd]) => sum + (rangeEnd - rangeStart), 0);
+  }, []);
+
+  const resetListenLogging = useCallback((track) => {
+    const trackKey = getQueueTrackKey(track);
+    listenLogStateRef.current = {
+      trackKey,
+      logged: false,
+    };
+    listenMetricsRef.current = {
+      trackKey,
+      lastPosition: 0,
+      listenedSeconds: 0,
+      coveredSeconds: 0,
+      segments: [],
+    };
+  }, [getQueueTrackKey]);
+
+  const syncListenProgress = useCallback((snapshot, position) => {
+    const track = snapshot?.currentTrack;
+    if (!track || track.local || !Number.isFinite(position)) return;
+
+    const trackKey = getQueueTrackKey(track);
+    if (!trackKey) return;
+
+    if (listenMetricsRef.current.trackKey !== trackKey) {
+      listenMetricsRef.current = {
+        trackKey,
+        lastPosition: Math.max(0, position),
+        listenedSeconds: 0,
+        coveredSeconds: 0,
+        segments: [],
+      };
+    }
+
+    const metrics = listenMetricsRef.current;
+    const currentPosition = Math.max(0, position);
+
+    if (metrics.lastPosition != null) {
+      const delta = currentPosition - metrics.lastPosition;
+      if (delta > 0 && delta <= MAX_TRUSTED_PROGRESS_DELTA_SECONDS) {
+        metrics.listenedSeconds += delta;
+        mergeListenSegment(metrics.lastPosition, currentPosition);
+      }
+    }
+
+    metrics.lastPosition = currentPosition;
+  }, [getQueueTrackKey, mergeListenSegment]);
+
+  const maybeLogCurrentListen = useCallback((snapshot, { positionOverride = null } = {}) => {
+    const track = snapshot?.currentTrack;
+    if (!track || track.local) return false;
+
+    const trackKey = getQueueTrackKey(track);
+    if (!trackKey) return false;
+
+    if (positionOverride != null) {
+      syncListenProgress(snapshot, positionOverride);
+    }
+
+    if (listenLogStateRef.current.trackKey !== trackKey) {
+      listenLogStateRef.current = { trackKey, logged: false };
+    }
+
+    if (listenLogStateRef.current.logged) return false;
+
+    const metrics = listenMetricsRef.current;
+    const listenedSeconds = Math.max(0, Math.floor(metrics.listenedSeconds || 0));
+    const durationSeconds = Math.max(0, Math.floor(Number(snapshot.duration || audio.duration || 0) || 0));
+    const coveredSeconds = Math.max(0, metrics.coveredSeconds || 0);
+    if (listenedSeconds <= 0) return false;
+
+    const completed = durationSeconds > 0 && (coveredSeconds / durationSeconds) >= COMPLETE_LISTEN_RATIO;
+    const source = normalizePlaybackSource(snapshot?.isRadio ? "radio" : snapshot?.queueSource);
+    const playlistId = source === "playlist" ? track.playlistId || null : null;
+
+    listenLogStateRef.current.logged = true;
+    logListen(track.id, listenedSeconds, completed, source, playlistId).catch((error) => {
+      console.warn("[ListenLog] Failed to log listen:", error);
+      if (listenLogStateRef.current.trackKey === trackKey && isRetryableListenError(error)) {
+        listenLogStateRef.current.logged = false;
+      }
+    });
+    return true;
+  }, [audio, getQueueTrackKey, syncListenProgress]);
 
   const autoCfTriggeredRef = useRef(false);
-  const startTrackPlayback = useCallback((track, queue, index, volume = stateRef.current.volume, crossfadeDuration = 1, replaceQueue = false) => {
+
+  const finishTrack = useCallback(() => {
+    const snapshot = stateRef.current;
+    if (snapshot.isRadio || endGuardRef.current) return;
+    endGuardRef.current = true;
+    stalledNearEndRef.current = 0;
+
+    if (snapshot.currentTrack) {
+      recordTrackShuffleOutcome(snapshot.currentTrack, snapshot, { completed: true });
+    }
+
+    maybeLogCurrentListen(snapshot, {
+      positionOverride: audio.duration || audio.currentTime || snapshot.duration || snapshot.progress,
+    });
+
+    if (snapshot.repeat === "one") {
+      audio.currentTime = 0;
+      audio.playbackRate = 1;
+      applyDesktopPlaybackState();
+      audio.play().catch(() => {});
+    } else {
+      skipNextRef.current?.({ recordCurrentOutcome: false });
+    }
+
+    window.setTimeout(() => {
+      endGuardRef.current = false;
+    }, 200);
+  }, [applyDesktopPlaybackState, audio, maybeLogCurrentListen, recordTrackShuffleOutcome]);
+
+  const setQueueState = useCallback((payload, { resetShuffle = true } = {}) => {
+    if (resetShuffle) resetShuffleCycle();
+    dispatch({ type: "SET_QUEUE_STATE", payload });
+  }, [resetShuffleCycle]);
+
+  const setQueuePrompt = useCallback((payload) => {
+    dispatch({ type: "SET_QUEUE_PROMPT", payload });
+  }, []);
+
+  const addToQueue = useCallback((track) => {
+    if (!track) return;
+    const snapshot = stateRef.current;
+    if (snapshot.currentTrack && snapshot.queueSource !== "queue") {
+      setQueuePrompt({ track });
+      return;
+    }
+
+    if (snapshot.queueSource === "queue") {
+      const nextQueue = [...snapshot.queue, track];
+      setQueueState({ queue: nextQueue, queueSource: "queue" }, { resetShuffle: true });
+      return;
+    }
+
+    const nextQueue = snapshot.currentTrack ? [snapshot.currentTrack, track] : [track];
+    setQueueState({
+      queue: nextQueue,
+      queueIndex: snapshot.currentTrack ? 0 : -1,
+      queueSource: "queue",
+    }, { resetShuffle: true });
+  }, [setQueuePrompt, setQueueState]);
+
+  const dismissQueuePrompt = useCallback(() => {
+    setQueuePrompt(null);
+  }, [setQueuePrompt]);
+
+  const enableCustomQueuePlayback = useCallback(() => {
+    const snapshot = stateRef.current;
+    if (snapshot.queueSource === "queue") return;
+
+    basePlaybackContextRef.current = createPlaybackContextSnapshot(snapshot);
+    const nextQueue = snapshot.currentTrack ? [snapshot.currentTrack] : [];
+
+    setQueueState({
+      queue: nextQueue,
+      queueIndex: snapshot.currentTrack ? 0 : -1,
+      queueSource: "queue",
+    }, { resetShuffle: true });
+  }, [setQueueState]);
+
+  const requestDisableCustomQueue = useCallback((payload = {}) => {
+    const snapshot = stateRef.current;
+    if (snapshot.queueSource !== "queue") return;
+    setQueuePrompt({ type: "disable-custom", ...payload });
+  }, [setQueuePrompt]);
+
+  const toggleCustomQueuePlayback = useCallback((enabled, payload = {}) => {
+    if (enabled) {
+      enableCustomQueuePlayback();
+      return;
+    }
+    requestDisableCustomQueue(payload);
+  }, [enableCustomQueuePlayback, requestDisableCustomQueue]);
+
+  const confirmQueueSwitch = useCallback(() => {
+    const snapshot = stateRef.current;
+    const prompt = snapshot.queuePrompt;
+    if (!prompt) return;
+
+    if (prompt.type === "disable-custom") {
+      const restoredContext = Array.isArray(prompt.queue)
+        ? {
+            queue: prompt.queue,
+            queueIndex: Number.isInteger(prompt.index) ? prompt.index : -1,
+            queueSource: prompt.queueSource || DEFAULT_PLAYBACK_SOURCE,
+          }
+        : basePlaybackContextRef.current;
+
+      const nextPayload = {
+        queue: restoredContext?.queue || [],
+        queueIndex: restoredContext?.queueIndex ?? -1,
+        queueSource: restoredContext?.queueSource || DEFAULT_PLAYBACK_SOURCE,
+        queuePrompt: null,
+      };
+      basePlaybackContextRef.current = null;
+      setQueueState(nextPayload, { resetShuffle: true });
+      return;
+    }
+
+    const pendingTrack = prompt.track;
+    if (!pendingTrack) return;
+
+    if (!basePlaybackContextRef.current) {
+      basePlaybackContextRef.current = createPlaybackContextSnapshot(snapshot);
+    }
+
+    const nextQueue = snapshot.currentTrack ? [snapshot.currentTrack, pendingTrack] : [pendingTrack];
+    setQueueState({
+      queue: nextQueue,
+      queueIndex: snapshot.currentTrack ? 0 : -1,
+      queueSource: "queue",
+      queuePrompt: null,
+    }, { resetShuffle: true });
+  }, [setQueueState]);
+
+  const removeQueueItem = useCallback((queueIndex) => {
+    const snapshot = stateRef.current;
+    const currentIndex = getQueueCurrentIndex(snapshot);
+    if (queueIndex < 0 || queueIndex >= snapshot.queue.length || queueIndex === currentIndex) return;
+
+    const nextQueue = snapshot.queue.filter((_, index) => index !== queueIndex);
+    const nextQueueIndex = snapshot.queueIndex >= 0 && queueIndex < snapshot.queueIndex
+      ? snapshot.queueIndex - 1
+      : snapshot.queueIndex;
+
+    setQueueState({ queue: nextQueue, queueIndex: nextQueueIndex }, { resetShuffle: true });
+  }, [getQueueCurrentIndex, setQueueState]);
+
+  const moveQueueItem = useCallback((fromIndex, toIndex) => {
+    const snapshot = stateRef.current;
+    const currentIndex = getQueueCurrentIndex(snapshot);
+    if (fromIndex === toIndex) return;
+    if (fromIndex < 0 || toIndex < 0 || fromIndex >= snapshot.queue.length || toIndex >= snapshot.queue.length) return;
+    if (fromIndex <= currentIndex || toIndex <= currentIndex) return;
+
+    const nextQueue = [...snapshot.queue];
+    const [moved] = nextQueue.splice(fromIndex, 1);
+    nextQueue.splice(toIndex, 0, moved);
+    setQueueState({ queue: nextQueue }, { resetShuffle: true });
+  }, [getQueueCurrentIndex, setQueueState]);
+
+  const getUpcomingQueue = useCallback((limit = 100) => {
+    const snapshot = stateRef.current;
+    if (!snapshot.queue.length) return [];
+
+    const currentIndex = getQueueCurrentIndex(snapshot);
+    const indices = snapshot.shuffle
+      ? ensureShuffleCycle(snapshot)
+      : snapshot.queue
+          .map((_, index) => index)
+          .filter((index) => index > currentIndex);
+
+    const capped = Number.isFinite(limit) ? indices.slice(0, limit) : indices;
+    return capped.map((queueIndex, order) => ({
+      ...snapshot.queue[queueIndex],
+      queueIndex,
+      queueOrder: order + 1,
+    }));
+  }, [ensureShuffleCycle, getQueueCurrentIndex]);
+
+  const startTrackPlayback = useCallback((track, queue, index, volume = stateRef.current.volume, crossfadeDuration = 1, replaceQueue = false, queueSource = null) => {
     seekSuppressCfRef.current = false;
     autoCfTriggeredRef.current = false;
     endGuardRef.current = false;
     stalledNearEndRef.current = 0;
     dispatch({
       type: replaceQueue ? "PLAY_TRACK" : "SET_TRACK_DIRECT",
-      payload: replaceQueue ? { track, queue, index } : { track, index },
+      payload: replaceQueue
+        ? { track, queue, index, queueSource: queueSource ?? stateRef.current.queueSource }
+        : { track, index },
     });
     if (IS_MOBILE) nativePlayTrack(track);
     else {
       applyDesktopPlaybackState(volume);
       doCrossfade(getStreamUrl(track), volume, crossfadeDuration);
     }
-    listenStartRef.current = 0;
-  }, [applyDesktopPlaybackState, doCrossfade, nativePlayTrack]);
+    resetListenLogging(track);
+  }, [applyDesktopPlaybackState, doCrossfade, nativePlayTrack, resetListenLogging]);
 
   useEffect(() => {
     if (IS_MOBILE) return;
     const onTime = () => {
       if (stateRef.current.isRadio) return;
       dispatch({ type: "SET_PROGRESS", payload: audio.currentTime });
+      syncListenProgress(stateRef.current, audio.currentTime);
 
       const cf = crossfadeRef.current;
       if (cf > 0 && !autoCfTriggeredRef.current && !crossfadeActiveRef.current && !seekSuppressCfRef.current && audio.duration > 0 && audio.duration - audio.currentTime <= cf && audio.duration - audio.currentTime > 0.5 && stateRef.current.repeat !== "one") {
         autoCfTriggeredRef.current = true;
         const s = stateRef.current;
-        if (s.currentTrack && !s.currentTrack.local) {
-          const elapsed = Math.floor(audio.currentTime - listenStartRef.current);
-          logListen(s.currentTrack.id, elapsed, true).catch(() => {});
-        }
+        maybeLogCurrentListen(s, { positionOverride: audio.currentTime });
         autoAdvanceRef.current?.();
       }
     };
@@ -660,7 +1011,7 @@ export function PlayerProvider({ children }) {
       window.removeEventListener("pageshow", onVisibilityOrFocus);
       document.removeEventListener("visibilitychange", onVisibilityOrFocus);
     };
-  }, [applyDesktopPlaybackState, audio, finishTrack]);
+  }, [applyDesktopPlaybackState, audio, finishTrack, maybeLogCurrentListen, syncListenProgress]);
 
   useEffect(() => {
     if (IS_MOBILE) return undefined;
@@ -699,11 +1050,14 @@ export function PlayerProvider({ children }) {
           if (stateRef.current.isRadio) return;
           if (ns.duration > 0) dispatch({ type: "SET_DURATION", payload: ns.duration });
           if (ns.currentTime != null) dispatch({ type: "SET_PROGRESS", payload: ns.currentTime });
+          if (ns.currentTime != null) {
+            syncListenProgress(stateRef.current, ns.currentTime);
+          }
           if (ns.status === "ended") {
             const s = stateRef.current;
-            if (s.currentTrack && !s.currentTrack.local) {
-              logListen(s.currentTrack.id, Math.floor(ns.currentTime || 0), true).catch(() => {});
-            }
+            maybeLogCurrentListen(s, {
+              positionOverride: ns.duration || ns.currentTime || s.duration || s.progress,
+            });
             if (s.repeat === "one") {
               if (s.currentTrack) {
                 recordTrackShuffleOutcome(s.currentTrack, s, { completed: true });
@@ -726,21 +1080,63 @@ export function PlayerProvider({ children }) {
     };
     init();
     return () => { unlisten?.(); invoke("plugin:nativeaudio|dispose").catch(() => {}); };
-  }, []);
+  }, [maybeLogCurrentListen, recordTrackShuffleOutcome, syncListenProgress]);
 
-  const playTrack = useCallback((track, queue = [], index = 0) => {
-    if (stateRef.current.currentTrack && getQueueTrackKey(stateRef.current.currentTrack) !== getQueueTrackKey(track)) {
-      recordTrackShuffleOutcome(stateRef.current.currentTrack, stateRef.current);
-      pushSessionHistory(stateRef.current);
+  const playTrack = useCallback((track, queue = [], index = 0, queueSource = DEFAULT_PLAYBACK_SOURCE) => {
+    const snapshot = stateRef.current;
+    if (snapshot.currentTrack && getQueueTrackKey(snapshot.currentTrack) !== getQueueTrackKey(track)) {
+      maybeLogCurrentListen(snapshot);
+      recordTrackShuffleOutcome(snapshot.currentTrack, snapshot);
+      pushSessionHistory(snapshot);
     }
-    if (stateRef.current.isRadio) {
+    if (snapshot.isRadio) {
       clearInterval(radioPollingRef.current);
       dispatch({ type: "STOP_RADIO" });
     }
-    if (queue !== stateRef.current.queue) resetShuffleCycle();
+    const incomingQueue = Array.isArray(queue) ? queue : [];
+    const queueChanged = incomingQueue !== snapshot.queue;
+    const incomingKey = getQueueTrackKey(track);
+    const currentTrackKey = getQueueTrackKey(snapshot.currentTrack);
+    const trackInExistingQueue =
+      snapshot.queue.some((queuedTrack) => getQueueTrackKey(queuedTrack) === incomingKey)
+      || (currentTrackKey != null && currentTrackKey === incomingKey);
+
+    if (queueSource !== "queue") {
+      basePlaybackContextRef.current = {
+        queue: incomingQueue,
+        queueIndex: index,
+        queueSource: normalizePlaybackSource(queueSource),
+        playlistId: track?.playlistId || null,
+      };
+    }
+
+    if (snapshot.queueSource === "queue" && queueSource !== "queue" && currentTrackKey != null && incomingKey === currentTrackKey) {
+      return;
+    }
+
+    if (snapshot.queueSource === "queue" && queueSource !== "queue" && queueChanged && !trackInExistingQueue) {
+      if (!IS_MOBILE) ensureAnalyser();
+      startTrackPlayback(track, snapshot.queue, snapshot.queueIndex, snapshot.volume, 1, false);
+      setQueuePrompt({
+        type: "disable-custom",
+        track,
+        queue: incomingQueue,
+        index,
+        queueSource: normalizePlaybackSource(queueSource),
+      });
+      return;
+    }
+
+    if (queueChanged) resetShuffleCycle();
     if (!IS_MOBILE) ensureAnalyser();
-    startTrackPlayback(track, queue, index, stateRef.current.volume, 1, true);
-  }, [ensureAnalyser, getQueueTrackKey, recordTrackShuffleOutcome, resetShuffleCycle, pushSessionHistory, startTrackPlayback]);
+    startTrackPlayback(track, incomingQueue, index, snapshot.volume, 1, true, normalizePlaybackSource(queueSource));
+  }, [ensureAnalyser, getQueueTrackKey, maybeLogCurrentListen, recordTrackShuffleOutcome, resetShuffleCycle, pushSessionHistory, startTrackPlayback, setQueuePrompt]);
+
+  const playQueueItem = useCallback((queueIndex) => {
+    const snapshot = stateRef.current;
+    if (queueIndex < 0 || queueIndex >= snapshot.queue.length) return;
+    playTrack(snapshot.queue[queueIndex], snapshot.queue, queueIndex, snapshot.queueSource || "queue");
+  }, [playTrack]);
 
   const togglePlay = useCallback(() => {
     if (state.isRadio) {
@@ -750,10 +1146,10 @@ export function PlayerProvider({ children }) {
         dispatch({ type: "SET_PLAYING", payload: false });
       } else {
         if (IS_MOBILE) {
-          invoke("plugin:nativeaudio|play_track", { url: `${API}/radio/stream`, title: "JuiceVault Radio", artist: "Live" }).catch(() => {});
+          invoke("plugin:nativeaudio|play_track", { url: getRadioStreamUrl(), title: "JuiceVault Radio", artist: "Live" }).catch(() => {});
         } else {
           applyDesktopPlaybackState();
-          audio.src = `${API}/radio/stream`;
+          audio.src = getRadioStreamUrl();
           audio.play().catch(() => {});
         }
         dispatch({ type: "SET_PLAYING", payload: true });
@@ -781,8 +1177,11 @@ export function PlayerProvider({ children }) {
   const seek = useCallback((time) => {
     if (IS_MOBILE) invoke("plugin:nativeaudio|seek", { time }).catch(() => {});
     else audio.currentTime = time;
+    if (listenMetricsRef.current.trackKey) {
+      listenMetricsRef.current.lastPosition = Math.max(0, time);
+    }
     dispatch({ type: "SET_PROGRESS", payload: time });
-  }, []);
+  }, [audio]);
 
   const startSeek = useCallback(() => {
     if (IS_MOBILE) return;
@@ -799,6 +1198,9 @@ export function PlayerProvider({ children }) {
       if (outputGainRef.current) outputGainRef.current.gain.value = seekVolRef.current ?? state.volume;
       else audio.volume = seekVolRef.current ?? state.volume;
       seekVolRef.current = null;
+    }
+    if (listenMetricsRef.current.trackKey) {
+      listenMetricsRef.current.lastPosition = Math.max(0, time);
     }
     dispatch({ type: "SET_PROGRESS", payload: time });
     seekSuppressCfRef.current = true;
@@ -820,6 +1222,7 @@ export function PlayerProvider({ children }) {
   }, [audio]);
 
   const skipNext = useCallback(({ recordCurrentOutcome = true, completedCurrent = false } = {}) => {
+    maybeLogCurrentListen(state);
     if (recordCurrentOutcome && state.currentTrack) {
       recordTrackShuffleOutcome(state.currentTrack, state, { completed: completedCurrent });
     }
@@ -832,12 +1235,13 @@ export function PlayerProvider({ children }) {
     }
     const track = state.queue[nextIdx];
     startTrackPlayback(track, state.queue, nextIdx, state.volume, 1);
-  }, [state, getNextQueueIndex, recordTrackShuffleOutcome, pushSessionHistory, startTrackPlayback]);
+  }, [state, getNextQueueIndex, maybeLogCurrentListen, recordTrackShuffleOutcome, pushSessionHistory, startTrackPlayback]);
 
   skipNextRef.current = skipNext;
 
   const autoAdvanceNext = useCallback(() => {
     const s = stateRef.current;
+    maybeLogCurrentListen(s);
     if (s.currentTrack) {
       recordTrackShuffleOutcome(s.currentTrack, s, { completed: true });
       pushSessionHistory(s);
@@ -850,7 +1254,7 @@ export function PlayerProvider({ children }) {
     }
     const track = s.queue[nextIdx];
     startTrackPlayback(track, s.queue, nextIdx, s.volume);
-  }, [getNextQueueIndex, recordTrackShuffleOutcome, pushSessionHistory, startTrackPlayback]);
+  }, [getNextQueueIndex, maybeLogCurrentListen, recordTrackShuffleOutcome, pushSessionHistory, startTrackPlayback]);
 
   const autoAdvanceRef = useRef(autoAdvanceNext);
   autoAdvanceRef.current = autoAdvanceNext;
@@ -864,6 +1268,7 @@ export function PlayerProvider({ children }) {
     const previousEntry = sessionHistoryRef.current.pop();
     if (previousEntry?.track) {
       if (state.currentTrack) {
+        maybeLogCurrentListen(state);
         recordTrackShuffleOutcome(state.currentTrack, state);
       }
       const previousQueue = Array.isArray(previousEntry.queue) ? previousEntry.queue : state.queue;
@@ -875,13 +1280,14 @@ export function PlayerProvider({ children }) {
     }
     if (!state.queue.length) return;
     if (state.currentTrack) {
+      maybeLogCurrentListen(state);
       recordTrackShuffleOutcome(state.currentTrack, state);
     }
     let prevIdx = state.queueIndex - 1;
     if (prevIdx < 0) prevIdx = state.repeat === "all" ? state.queue.length - 1 : 0;
     const track = state.queue[prevIdx];
     startTrackPlayback(track, state.queue, prevIdx, state.volume, 1);
-  }, [state, audio, recordTrackShuffleOutcome, getQueueTrackKey, startTrackPlayback]);
+  }, [state, audio, maybeLogCurrentListen, recordTrackShuffleOutcome, getQueueTrackKey, startTrackPlayback]);
 
   skipPrevRef.current = skipPrev;
 
@@ -908,17 +1314,18 @@ export function PlayerProvider({ children }) {
       if (stateRef.current.isRadio && stateRef.current.isPlaying) {
         radioElapsedRef.current += 1;
         dispatch({ type: "SET_PROGRESS", payload: radioElapsedRef.current });
+        syncListenProgress(stateRef.current, radioElapsedRef.current);
       }
     }, 1000);
-  }, []);
+  }, [syncListenProgress]);
 
   const playRadio = useCallback(() => {
     if (!IS_MOBILE) ensureAnalyser();
     if (IS_MOBILE) {
-      invoke("plugin:nativeaudio|play_track", { url: `${API}/radio/stream`, title: "JuiceVault Radio", artist: "Live" }).catch(() => {});
+      invoke("plugin:nativeaudio|play_track", { url: getRadioStreamUrl(), title: "JuiceVault Radio", artist: "Live" }).catch(() => {});
     } else {
       applyDesktopPlaybackState();
-      audio.src = `${API}/radio/stream`;
+      audio.src = getRadioStreamUrl();
       audio.play().catch(() => {});
     }
     dispatch({ type: "PLAY_RADIO", payload: {} });
@@ -929,12 +1336,21 @@ export function PlayerProvider({ children }) {
         const d = res?.data || res;
         if (d?.current) {
           const track = { id: d.current.id, title: d.current.title, artist: d.current.artist, cover: d.current.cover };
+          const previous = stateRef.current.currentTrack;
           dispatch({ type: "SET_RADIO_DATA", payload: d });
           radioElapsedRef.current = d.current.elapsed || 0;
           dispatch({ type: "SET_PROGRESS", payload: radioElapsedRef.current });
           dispatch({ type: "SET_DURATION", payload: d.current.duration || 0 });
-          if (stateRef.current.currentTrack?.id !== track.id) {
+          if (previous?.id !== track.id) {
+            if (previous?.id) {
+              maybeLogCurrentListen(stateRef.current, {
+                positionOverride: stateRef.current.progress || radioElapsedRef.current,
+              });
+            }
             dispatch({ type: "SET_TRACK_DIRECT", payload: { track, index: -1 } });
+            resetListenLogging(track);
+          } else {
+            syncListenProgress(stateRef.current, radioElapsedRef.current);
           }
         }
       } catch {}
@@ -943,7 +1359,7 @@ export function PlayerProvider({ children }) {
     startRadioTick();
     clearInterval(radioPollingRef.current);
     radioPollingRef.current = setInterval(poll, 5000);
-  }, [startRadioTick, ensureAnalyser, applyDesktopPlaybackState]);
+  }, [startRadioTick, ensureAnalyser, applyDesktopPlaybackState, maybeLogCurrentListen, resetListenLogging, syncListenProgress]);
 
   const refreshRadio = useCallback(async () => {
     if (!stateRef.current.isRadio) return;
@@ -952,25 +1368,39 @@ export function PlayerProvider({ children }) {
       const d = res?.data || res;
       if (d?.current) {
         const track = { id: d.current.id, title: d.current.title, artist: d.current.artist, cover: d.current.cover };
+        const previous = stateRef.current.currentTrack;
         dispatch({ type: "SET_RADIO_DATA", payload: d });
         radioElapsedRef.current = d.current.elapsed || 0;
         dispatch({ type: "SET_PROGRESS", payload: radioElapsedRef.current });
         dispatch({ type: "SET_DURATION", payload: d.current.duration || 0 });
-        if (stateRef.current.currentTrack?.id !== track.id) {
+        if (previous?.id !== track.id) {
+          if (previous?.id) {
+            maybeLogCurrentListen(stateRef.current, {
+              positionOverride: stateRef.current.progress || radioElapsedRef.current,
+            });
+          }
           dispatch({ type: "SET_TRACK_DIRECT", payload: { track, index: -1 } });
+          resetListenLogging(track);
+        } else {
+          syncListenProgress(stateRef.current, radioElapsedRef.current);
         }
       }
     } catch {}
-  }, []);
+  }, [maybeLogCurrentListen, resetListenLogging, syncListenProgress]);
 
   const stopRadio = useCallback(() => {
     clearInterval(radioPollingRef.current);
     clearInterval(radioTickRef.current);
+    if (stateRef.current.isRadio && stateRef.current.currentTrack) {
+      maybeLogCurrentListen(stateRef.current, {
+        positionOverride: stateRef.current.progress || radioElapsedRef.current,
+      });
+    }
     if (IS_MOBILE) invoke("plugin:nativeaudio|stop").catch(() => {});
     else { audio.pause(); audio.src = ""; }
     dispatch({ type: "STOP_RADIO" });
     dispatch({ type: "SET_PLAYING", payload: false });
-  }, []);
+  }, [audio, maybeLogCurrentListen]);
 
   useEffect(() => {
     return () => { clearInterval(radioPollingRef.current); clearInterval(radioTickRef.current); };
@@ -1008,7 +1438,17 @@ export function PlayerProvider({ children }) {
     ms.setActionHandler("pause", () => { audio.pause(); dispatch({ type: "SET_PLAYING", payload: false }); });
     ms.setActionHandler("previoustrack", () => skipNextRef.current && skipPrev());
     ms.setActionHandler("nexttrack", () => skipNextRef.current?.());
-    try { ms.setActionHandler("seekto", (details) => { if (details.seekTime != null) { audio.currentTime = details.seekTime; dispatch({ type: "SET_PROGRESS", payload: details.seekTime }); } }); } catch {}
+    try {
+      ms.setActionHandler("seekto", (details) => {
+        if (details.seekTime != null) {
+          audio.currentTime = details.seekTime;
+          if (listenMetricsRef.current.trackKey) {
+            listenMetricsRef.current.lastPosition = Math.max(0, details.seekTime);
+          }
+          dispatch({ type: "SET_PROGRESS", payload: details.seekTime });
+        }
+      });
+    } catch {}
     return () => {
       ms.setActionHandler("play", null);
       ms.setActionHandler("pause", null);
@@ -1116,6 +1556,7 @@ export function PlayerProvider({ children }) {
     analyserReady,
     ensureAnalyser,
     playTrack,
+    playQueueItem,
     playRadio,
     stopRadio,
     refreshRadio,
@@ -1132,6 +1573,14 @@ export function PlayerProvider({ children }) {
     getEQ,
     setCrossfade,
     getCrossfade,
+    addToQueue,
+    removeQueueItem,
+    moveQueueItem,
+    getUpcomingQueue,
+    enableCustomQueuePlayback,
+    toggleCustomQueuePlayback,
+    dismissQueuePrompt,
+    confirmQueueSwitch,
     isMobile: IS_MOBILE,
   };
 

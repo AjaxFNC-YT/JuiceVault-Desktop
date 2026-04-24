@@ -4,12 +4,12 @@ import { Play, Music2, Trash2, ArrowLeft, Pencil, ImagePlus, X, ListMusic, Shuff
 import { getPlaylist, removeSongFromPlaylist, updatePlaylist, deletePlaylist, uploadPlaylistCover, removePlaylistCover, fetchSongEras } from "@/lib/api";
 import { usePlayer } from "@/stores/playerStore";
 import { useTheme } from "@/stores/themeStore";
+import { useLocalFiles } from "@/stores/localFilesStore";
 import SongContextMenu from "@/components/SongContextMenu";
 import FilterBar, { getDefaultSort } from "@/components/FilterBar";
 import { useFuzzySearchEnabled } from "@/hooks/useFuzzySearch";
 import { searchCollection } from "@/lib/search";
-
-const CDN = "https://api.juicevault.xyz";
+import { toApiUrl } from "@/lib/platform";
 
 function PlaylistView({ playlistId, playlistName, onBack, onInfo, onAddToPlaylist, onPlaylistChanged, onPlaylistDeleted }) {
   const { theme } = useTheme();
@@ -28,6 +28,7 @@ function PlaylistView({ playlistId, playlistName, onBack, onInfo, onAddToPlaylis
   const [eraLoading, setEraLoading] = useState(false);
   const [activeEras, setActiveEras] = useState(new Set());
   const { playTrack } = usePlayer();
+  const { files: localFiles } = useLocalFiles() || { files: [] };
   const fuzzySearch = useFuzzySearchEnabled();
 
   useEffect(() => {
@@ -44,17 +45,30 @@ function PlaylistView({ playlistId, playlistName, onBack, onInfo, onAddToPlaylis
     }).catch(() => setLoading(false));
   }, [playlistId]);
 
-  const rawSongs = (playlist?.songs || []).map((s) => s.song).filter(Boolean);
-  const coverUrl = playlist?.coverImage ? `${CDN}${playlist.coverImage}` : null;
+  const rawSongs = useMemo(() => {
+    const localMap = new Map(localFiles.map((file) => [file.file_hash, file]));
+    return (playlist?.songs || []).map((entry) => {
+      const song = entry?.song;
+      if (!song) return null;
+      if (song.id?.startsWith("local:") || entry.songId?.startsWith("local:")) {
+        const hash = (song.id || entry.songId).replace("local:", "");
+        const local = localMap.get(hash);
+        if (local) return { ...local, playlistId };
+        return { ...song, id: `local:${hash}`, local: true, playlistId };
+      }
+      return { ...song, playlistId };
+    }).filter(Boolean);
+  }, [playlist, playlistId, localFiles]);
+  const coverUrl = playlist?.coverImage ? toApiUrl(playlist.coverImage) : null;
 
   useEffect(() => {
     if (!rawSongs.length) return;
-    const ids = rawSongs.map((s) => s.id).filter(Boolean);
+    const ids = rawSongs.filter((song) => !song.local).map((s) => s.id).filter(Boolean);
     if (ids.length) {
       setEraLoading(true);
       fetchSongEras(ids).then((m) => setEraMap(m || {})).catch(() => {}).finally(() => setEraLoading(false));
     }
-  }, [playlist]);
+  }, [rawSongs]);
 
   const { allEras, hasOther } = useMemo(() => {
     const set = new Set();
@@ -82,7 +96,13 @@ function PlaylistView({ playlistId, playlistName, onBack, onInfo, onAddToPlaylis
       list = searchCollection(
         list,
         query,
-        (song) => [song.title, song.artist, song.album, ...(song.alt_names || [])],
+        (song) => [
+          { value: song.title, mode: "fuzzy", priority: 0 },
+          { value: song.file_name, mode: "fuzzy", priority: 1 },
+          ...(song.alt_names || []).map((name) => ({ value: name, mode: "fuzzy", priority: 2 })),
+          { value: song.artist, mode: "exact", priority: 3 },
+          { value: song.album, mode: "exact", priority: 4 },
+        ],
         { fuzzy: fuzzySearch },
       );
     }
@@ -94,6 +114,7 @@ function PlaylistView({ playlistId, playlistName, onBack, onInfo, onAddToPlaylis
         return false;
       });
     }
+    if (query.trim()) return list;
     return [...list].sort((a, b) => {
       if (sortBy === "a-z") return (a.title || "").localeCompare(b.title || "");
       if (sortBy === "z-a") return (b.title || "").localeCompare(a.title || "");
@@ -102,16 +123,16 @@ function PlaylistView({ playlistId, playlistName, onBack, onInfo, onAddToPlaylis
     });
   }, [rawSongs, query, sortBy, activeEras, eraMap, fuzzySearch]);
 
-  const handlePlay = (song, idx) => playTrack(song, songs, idx);
+  const handlePlay = (song, idx) => playTrack(song, songs, idx, "playlist");
 
   const handlePlayAll = () => {
-    if (songs.length > 0) playTrack(songs[0], songs, 0);
+    if (songs.length > 0) playTrack(songs[0], songs, 0, "playlist");
   };
 
   const handleShufflePlay = () => {
     if (songs.length === 0) return;
     const shuffled = [...songs].sort(() => Math.random() - 0.5);
-    playTrack(shuffled[0], shuffled, 0);
+    playTrack(shuffled[0], shuffled, 0, "playlist");
   };
 
   const handleRemove = async (songId) => {
@@ -189,7 +210,7 @@ function PlaylistView({ playlistId, playlistName, onBack, onInfo, onAddToPlaylis
               <div className="grid grid-cols-2 grid-rows-2 w-full h-full">
                 {songs.slice(-4).reverse().map((s, i) => (
                   <div key={i} className="overflow-hidden">
-                    {s.cover ? <img src={`${CDN}${s.cover}`} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full bg-white/[0.03]" />}
+                    {s.cover ? <img src={s.local ? s.cover : toApiUrl(s.cover)} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full bg-white/[0.03]" />}
                   </div>
                 ))}
               </div>
@@ -336,7 +357,7 @@ function PlaylistView({ playlistId, playlistName, onBack, onInfo, onAddToPlaylis
       {songs.length > 0 ? (
         <div className="flex flex-col gap-0.5">
           {songs.map((song, i) => {
-            const cover = song.cover ? `${CDN}${song.cover}` : null;
+            const cover = song.cover ? (song.local ? song.cover : toApiUrl(song.cover)) : null;
             return (
               <div key={song.id} className="group flex items-center gap-3 rounded-md px-3 py-2 hover:bg-white/[0.05]">
                 <button onClick={() => handlePlay(song, i)} className="flex min-w-0 flex-1 items-center gap-3 text-left">

@@ -4,13 +4,83 @@ import { listen } from "@tauri-apps/api/event";
 import { convertFileSrc } from "@tauri-apps/api/core";
 
 const LocalFilesContext = createContext(null);
+const LOCAL_FILES_CACHE_KEY = "localFilesIndex";
+const LOCAL_FILES_MANIFEST_KEY = "localFilesManifest";
+const MAX_LOCAL_FILES_CACHE_BYTES = 4 * 1024 * 1024;
+
+function readJsonStorage(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function persistFilesCache(files) {
+  try {
+    const serialized = JSON.stringify(files);
+    if (serialized.length <= MAX_LOCAL_FILES_CACHE_BYTES) {
+      localStorage.setItem(LOCAL_FILES_CACHE_KEY, serialized);
+    } else {
+      console.warn("[LocalFiles] Cached index too large for localStorage, keeping it memory-only");
+      localStorage.removeItem(LOCAL_FILES_CACHE_KEY);
+    }
+  } catch (error) {
+    console.warn("[LocalFiles] Failed to persist cached index:", error);
+    localStorage.removeItem(LOCAL_FILES_CACHE_KEY);
+  }
+}
+
+function buildManifest(files) {
+  return files.map((file) => ({
+    path: file.path,
+    file_hash: file.file_hash,
+    file_size: file.file_size_bytes ?? file.file_size ?? 0,
+    modified_at: file.modified_at ?? 0,
+  }));
+}
+
+function persistManifest(files) {
+  try {
+    localStorage.setItem(LOCAL_FILES_MANIFEST_KEY, JSON.stringify(buildManifest(files)));
+  } catch (error) {
+    console.warn("[LocalFiles] Failed to persist manifest:", error);
+    localStorage.removeItem(LOCAL_FILES_MANIFEST_KEY);
+  }
+}
+
+function resolveLocalCover(coverPath) {
+  if (!coverPath) return null;
+  if (/^(https?:|asset:|data:|blob:)/i.test(coverPath)) {
+    return coverPath;
+  }
+  return convertFileSrc(coverPath);
+}
+
+function normalizeCachedFiles(files) {
+  return (Array.isArray(files) ? files : []).map((file) => {
+    const rawCoverPath = file.rawCoverPath || file.cover || null;
+    return {
+      ...file,
+      local: true,
+      rawCoverPath,
+      cover: resolveLocalCover(rawCoverPath),
+      modified_at: file.modified_at ?? file.modifiedAt ?? 0,
+      file_size_bytes: file.file_size_bytes ?? file.file_size ?? 0,
+    };
+  });
+}
 
 const initialState = {
-  enabled: JSON.parse(localStorage.getItem("localFilesEnabled") || "false"),
-  sources: JSON.parse(localStorage.getItem("localFilesSources") || "[]"),
-  files: JSON.parse(localStorage.getItem("localFilesIndex") || "[]"),
+  enabled: readJsonStorage("localFilesEnabled", false),
+  sources: readJsonStorage("localFilesSources", []),
+  files: [],
+  manifest: readJsonStorage(LOCAL_FILES_MANIFEST_KEY, []),
   scanning: false,
   scanProgress: null,
+  rescanRequiredCount: 0,
+  hydrated: false,
 };
 
 function reducer(state, action) {
@@ -20,17 +90,37 @@ function reducer(state, action) {
     case "SET_SOURCES":
       return { ...state, sources: action.payload };
     case "SET_FILES":
-      return { ...state, files: action.payload };
-    case "ADD_BATCH": {
-      const existing = new Set(state.files.map((f) => f.file_hash));
-      const newFiles = action.payload.filter((f) => !existing.has(f.file_hash));
-      if (!newFiles.length) return state;
-      return { ...state, files: [...state.files, ...newFiles] };
+      return { ...state, files: action.payload, manifest: buildManifest(action.payload) };
+    case "UPSERT_BATCH": {
+      if (!action.payload.length) return state;
+      const next = [...state.files];
+      const byPath = new Map(next.map((file, index) => [file.path, index]));
+      for (const file of action.payload) {
+        const existingIndex = byPath.get(file.path);
+        if (existingIndex == null) {
+          byPath.set(file.path, next.length);
+          next.push(file);
+        } else {
+          next[existingIndex] = { ...next[existingIndex], ...file };
+        }
+      }
+      return { ...state, files: next, manifest: buildManifest(next) };
     }
     case "SET_SCANNING":
       return { ...state, scanning: action.payload };
     case "SET_SCAN_PROGRESS":
       return { ...state, scanProgress: action.payload };
+    case "REMOVE_PATHS": {
+      if (!action.payload.length) return state;
+      const removed = new Set(action.payload);
+      const next = state.files.filter((file) => !removed.has(file.path));
+      if (next.length === state.files.length) return state;
+      return { ...state, files: next, manifest: buildManifest(next) };
+    }
+    case "SET_RESCAN_REQUIRED_COUNT":
+      return { ...state, rescanRequiredCount: action.payload };
+    case "SET_HYDRATED":
+      return { ...state, hydrated: action.payload };
     default:
       return state;
   }
@@ -43,6 +133,7 @@ function toLocalFile(f) {
     path: f.path,
     file_name: f.file_name,
     file_hash: f.file_hash,
+    modified_at: f.modified_at ?? f.modifiedAt ?? 0,
     title: f.title,
     artist: f.artist,
     album: f.album,
@@ -50,7 +141,7 @@ function toLocalFile(f) {
     length: formatDuration(f.duration),
     file_size: formatBytes(f.file_size),
     file_size_bytes: f.file_size,
-    cover: f.cover ? convertFileSrc(f.cover) : null,
+    cover: resolveLocalCover(f.cover),
     rawCoverPath: f.cover || null,
     play_count: 0,
   };
@@ -60,26 +151,54 @@ export function LocalFilesProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const stateRef = useRef(state);
   stateRef.current = state;
-  const scanCountRef = useRef(0);
+  const autoScanStartedRef = useRef(false);
+
+  useEffect(() => {
+    const hydrate = () => {
+      try {
+        const raw = localStorage.getItem(LOCAL_FILES_CACHE_KEY);
+        if (!raw) return;
+        if (raw.length > MAX_LOCAL_FILES_CACHE_BYTES) {
+          console.warn("[LocalFiles] Skipping oversized cached index at startup");
+          localStorage.removeItem(LOCAL_FILES_CACHE_KEY);
+          return;
+        }
+        const parsed = JSON.parse(raw);
+        dispatch({ type: "SET_FILES", payload: normalizeCachedFiles(parsed) });
+      } catch (error) {
+        console.warn("[LocalFiles] Failed to restore cached index:", error);
+        localStorage.removeItem(LOCAL_FILES_CACHE_KEY);
+      } finally {
+        dispatch({ type: "SET_HYDRATED", payload: true });
+      }
+    };
+
+    if ("requestIdleCallback" in window) {
+      const id = window.requestIdleCallback(hydrate, { timeout: 1500 });
+      return () => window.cancelIdleCallback(id);
+    }
+
+    const timer = window.setTimeout(hydrate, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     const unsubs = [];
     listen("local-files-batch", (event) => {
       const { files, total } = event.payload;
       const mapped = (files || []).map(toLocalFile);
-      dispatch({ type: "ADD_BATCH", payload: mapped });
+      dispatch({ type: "UPSERT_BATCH", payload: mapped });
       dispatch({ type: "SET_SCAN_PROGRESS", payload: `Indexing... ${total} files found` });
-    }).then((u) => unsubs.push(u));
-
-    listen("local-scan-complete", () => {
-      dispatch({ type: "SET_SCANNING", payload: false });
-      dispatch({ type: "SET_SCAN_PROGRESS", payload: null });
-      const files = stateRef.current.files;
-      localStorage.setItem("localFilesIndex", JSON.stringify(files));
     }).then((u) => unsubs.push(u));
 
     return () => unsubs.forEach((u) => u());
   }, []);
+
+  useEffect(() => {
+    if (!state.hydrated) return;
+    persistFilesCache(state.files);
+    persistManifest(state.files);
+  }, [state.files, state.hydrated]);
 
   const setEnabled = useCallback((enabled) => {
     dispatch({ type: "SET_ENABLED", payload: enabled });
@@ -87,21 +206,46 @@ export function LocalFilesProvider({ children }) {
     updateUserPreferences({ localFilesEnabled: enabled }).catch(() => {});
   }, []);
 
-  const scanAllSources = useCallback(async () => {
-    const sources = stateRef.current.sources;
+  const runScan = useCallback(async (sources, { allowUpdates = false } = {}) => {
     if (!sources.length) return;
     dispatch({ type: "SET_SCANNING", payload: true });
-    scanCountRef.current = 0;
-    dispatch({ type: "SET_SCAN_PROGRESS", payload: "Starting scan..." });
+    dispatch({ type: "SET_SCAN_PROGRESS", payload: allowUpdates ? "Refreshing local files..." : "Checking for new local files..." });
 
-    const knownHashes = stateRef.current.files.map((f) => f.file_hash);
+    let changedCount = 0;
+    const removedPaths = new Set();
 
-    for (let i = 0; i < sources.length; i++) {
-      try {
-        await scanLocalDirectory(sources[i], knownHashes.length ? knownHashes : null);
-      } catch {}
+    try {
+      for (let i = 0; i < sources.length; i++) {
+        dispatch({
+          type: "SET_SCAN_PROGRESS",
+          payload: `${allowUpdates ? "Refreshing" : "Checking"} source ${i + 1} of ${sources.length}...`,
+        });
+
+        const knownFiles = stateRef.current.manifest?.length
+          ? stateRef.current.manifest
+          : buildManifest(stateRef.current.files);
+
+        try {
+          const summary = await scanLocalDirectory(sources[i], knownFiles.length ? knownFiles : null, allowUpdates);
+          for (const path of summary?.removedPaths || []) removedPaths.add(path);
+          changedCount += Number(summary?.changedCount || 0);
+        } catch {}
+      }
+    } finally {
+      if (removedPaths.size) {
+        dispatch({ type: "REMOVE_PATHS", payload: [...removedPaths] });
+      }
+
+      dispatch({ type: "SET_RESCAN_REQUIRED_COUNT", payload: allowUpdates ? 0 : changedCount });
+      dispatch({ type: "SET_SCANNING", payload: false });
+      dispatch({ type: "SET_SCAN_PROGRESS", payload: null });
     }
   }, []);
+
+  const scanAllSources = useCallback(async ({ allowUpdates = true } = {}) => {
+    const sources = stateRef.current.sources;
+    await runScan(sources, { allowUpdates });
+  }, [runScan]);
 
   const addSource = useCallback((path) => {
     const current = stateRef.current.sources;
@@ -110,8 +254,8 @@ export function LocalFilesProvider({ children }) {
     dispatch({ type: "SET_SOURCES", payload: next });
     localStorage.setItem("localFilesSources", JSON.stringify(next));
     updateUserPreferences({ localFilesSources: next }).catch(() => {});
-    setTimeout(() => scanAllSources(), 100);
-  }, [scanAllSources]);
+    setTimeout(() => runScan([path], { allowUpdates: false }), 100);
+  }, [runScan]);
 
   const removeSource = useCallback((path) => {
     const next = stateRef.current.sources.filter((s) => s !== path);
@@ -120,14 +264,15 @@ export function LocalFilesProvider({ children }) {
     updateUserPreferences({ localFilesSources: next }).catch(() => {});
     const files = stateRef.current.files.filter((f) => !f.path.startsWith(path));
     dispatch({ type: "SET_FILES", payload: files });
-    localStorage.setItem("localFilesIndex", JSON.stringify(files));
   }, []);
 
   useEffect(() => {
-    if (state.enabled && state.sources.length && !state.files.length) {
-      scanAllSources();
+    if (!state.hydrated) return;
+    if (state.enabled && state.sources.length && !autoScanStartedRef.current) {
+      autoScanStartedRef.current = true;
+      scanAllSources({ allowUpdates: state.files.length === 0 });
     }
-  }, []);
+  }, [state.enabled, state.sources.length, state.hydrated, state.files.length, scanAllSources]);
 
   return (
     <LocalFilesContext.Provider value={{ ...state, setEnabled, addSource, removeSource, scanAllSources }}>

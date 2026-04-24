@@ -1,5 +1,6 @@
 export const FUZZY_SEARCH_STORAGE_KEY = "fuzzySearch";
 export const FUZZY_SEARCH_SYNC_EVENT = "fuzzy-search-sync";
+const FIELD_PRIORITY_WEIGHT = 100;
 
 function normalizeValue(value) {
   return String(value || "")
@@ -77,7 +78,7 @@ function isWithinDistance(a, b, maxDistance) {
 function compactsMatch(fieldForms, queryForms) {
   return queryForms.compactForms.some((queryCompact) =>
     fieldForms.compactForms.some((fieldCompact) =>
-      fieldCompact === queryCompact || fieldCompact.includes(queryCompact) || queryCompact.includes(fieldCompact),
+      fieldCompact === queryCompact || fieldCompact.includes(queryCompact),
     ),
   );
 }
@@ -85,7 +86,7 @@ function compactsMatch(fieldForms, queryForms) {
 function tokensMatch(fieldForms, queryForms) {
   return queryForms.tokens.every((queryToken) =>
     fieldForms.tokens.some((fieldToken) =>
-      fieldToken === queryToken || fieldToken.includes(queryToken) || queryToken.includes(fieldToken),
+      fieldToken === queryToken || fieldToken.includes(queryToken),
     ),
   );
 }
@@ -95,15 +96,21 @@ function fuzzyTokensMatch(fieldForms, queryForms) {
 
   for (const queryToken of queryForms.tokens) {
     const directMatch = fieldForms.tokens.some((fieldToken) =>
-      fieldToken === queryToken || fieldToken.includes(queryToken) || queryToken.includes(fieldToken),
+      fieldToken === queryToken || fieldToken.includes(queryToken),
     );
 
     if (directMatch) continue;
 
+    if (queryToken.length < 4) return null;
+
     const maxDistance = getMaxDistance(queryToken);
     if (!maxDistance) return null;
 
-    const fuzzyMatch = fieldForms.tokens.some((fieldToken) => isWithinDistance(fieldToken, queryToken, maxDistance));
+    const fuzzyMatch = fieldForms.tokens.some((fieldToken) =>
+      fieldToken[0] === queryToken[0]
+      && Math.abs(fieldToken.length - queryToken.length) <= maxDistance
+      && isWithinDistance(fieldToken, queryToken, maxDistance),
+    );
     if (!fuzzyMatch) return null;
     penalty += 1;
   }
@@ -114,7 +121,11 @@ function fuzzyTokensMatch(fieldForms, queryForms) {
 export function getFuzzySearchEnabled() {
   if (typeof window === "undefined") return true;
   const stored = localStorage.getItem(FUZZY_SEARCH_STORAGE_KEY);
-  return stored == null ? true : stored !== "false";
+  if (stored == null) {
+    localStorage.setItem(FUZZY_SEARCH_STORAGE_KEY, "true");
+    return true;
+  }
+  return stored !== "false";
 }
 
 export function setFuzzySearchEnabled(enabled) {
@@ -123,27 +134,73 @@ export function setFuzzySearchEnabled(enabled) {
   window.dispatchEvent(new Event(FUZZY_SEARCH_SYNC_EVENT));
 }
 
+function normalizeFieldEntry(entry) {
+  if (entry == null) return null;
+
+  if (typeof entry === "string" || typeof entry === "number") {
+    return { value: entry, mode: "fuzzy", priority: 10 };
+  }
+
+  if (typeof entry === "object" && "value" in entry) {
+    return {
+      value: entry.value,
+      mode: entry.mode || "exact",
+      priority: entry.priority ?? 10,
+    };
+  }
+
+  return null;
+}
+
+function getMatchRank(fieldForms, queryForms, fuzzyAllowed) {
+  if (
+    fieldForms.normalized === queryForms.normalized
+    || (compactsMatch(fieldForms, queryForms) && queryForms.compactForms.some((compact) => fieldForms.compactForms.includes(compact)))
+  ) {
+    return 0;
+  }
+
+  const startsWithNormalized = fieldForms.normalized.startsWith(queryForms.normalized);
+  const startsWithCompact = queryForms.compactForms.some((queryCompact) =>
+    fieldForms.compactForms.some((fieldCompact) => fieldCompact.startsWith(queryCompact)),
+  );
+  if (startsWithNormalized || startsWithCompact) {
+    return 1;
+  }
+
+  if (fieldForms.normalized.includes(queryForms.normalized) || compactsMatch(fieldForms, queryForms)) {
+    return 2;
+  }
+
+  if (tokensMatch(fieldForms, queryForms)) {
+    return 3;
+  }
+
+  if (fuzzyAllowed) {
+    const fuzzyPenalty = fuzzyTokensMatch(fieldForms, queryForms);
+    if (fuzzyPenalty != null) return 10 + fuzzyPenalty;
+  }
+
+  return null;
+}
+
 export function getSearchScore(values, query, { fuzzy = getFuzzySearchEnabled() } = {}) {
   const queryForms = buildSearchForms(query);
   if (!queryForms.normalized) return 0;
 
   let best = null;
-  for (const value of values) {
-    const fieldForms = buildSearchForms(value);
+  for (const rawEntry of values) {
+    const entry = normalizeFieldEntry(rawEntry);
+    if (!entry) continue;
+
+    const fieldForms = buildSearchForms(entry.value);
     if (!fieldForms.normalized) continue;
 
-    let score = null;
-    if (fieldForms.normalized === queryForms.normalized || compactsMatch(fieldForms, queryForms) && queryForms.compactForms.some((compact) => fieldForms.compactForms.includes(compact))) {
-      score = 0;
-    } else if (fieldForms.normalized.includes(queryForms.normalized) || compactsMatch(fieldForms, queryForms)) {
-      score = 1;
-    } else if (tokensMatch(fieldForms, queryForms)) {
-      score = 2;
-    } else if (fuzzy) {
-      const fuzzyPenalty = fuzzyTokensMatch(fieldForms, queryForms);
-      if (fuzzyPenalty != null) score = 4 + fuzzyPenalty;
-    }
+    const fuzzyAllowed = fuzzy && entry.mode === "fuzzy";
+    const rank = getMatchRank(fieldForms, queryForms, fuzzyAllowed);
+    if (rank == null) continue;
 
+    const score = (entry.priority * FIELD_PRIORITY_WEIGHT) + rank;
     if (score != null && (best == null || score < best)) best = score;
   }
 

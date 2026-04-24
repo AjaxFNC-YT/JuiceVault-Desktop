@@ -34,11 +34,24 @@ pub async fn delete_playlist(access_token: String, playlist_id: String) -> Resul
 }
 
 #[tauri::command]
-pub async fn add_songs_to_playlist(access_token: String, playlist_id: String, song_ids: Vec<String>) -> Result<Value, String> {
+pub async fn add_songs_to_playlist(
+    access_token: String,
+    playlist_id: String,
+    song_ids: Vec<String>,
+    local_files: Option<Value>,
+) -> Result<Value, String> {
     let client = ApiClient::new();
-    client.authed_post(&format!("/user/playlists/{}/songs", playlist_id), &access_token, serde_json::json!({
+    let mut body = serde_json::json!({
         "songIds": song_ids
-    })).await
+    });
+
+    if let Some(local_files) = local_files {
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("localFiles".into(), local_files);
+        }
+    }
+
+    client.authed_post(&format!("/user/playlists/{}/songs", playlist_id), &access_token, body).await
 }
 
 #[tauri::command]

@@ -5,25 +5,24 @@ import { useTheme, hexToRgb } from "@/stores/themeStore";
 import { useIsMobile } from "@/hooks/useMobile";
 import { useFuzzySearchEnabled } from "@/hooks/useFuzzySearch";
 import { searchCollection } from "@/lib/search";
-
-const CDN = "https://api.juicevault.xyz";
+import { toApiUrl } from "@/lib/platform";
 
 function PlaylistCover({ playlist }) {
   if (playlist.coverImage) {
-    return <img src={`${CDN}${playlist.coverImage}`} alt="" className="h-full w-full object-cover" />;
+    return <img src={toApiUrl(playlist.coverImage)} alt="" className="h-full w-full object-cover" />;
   }
   const songIds = (playlist.songs || []).slice(-4).map((s) => s.songId || s);
   if (songIds.length >= 4) {
     return (
       <div className="grid grid-cols-2 grid-rows-2 h-full w-full">
         {songIds.slice(0, 4).map((id, i) => (
-          <img key={i} src={`${CDN}/cdn/music/covers/${id}`} alt="" className="h-full w-full object-cover" onError={(e) => { e.target.style.display = "none"; }} />
+          <img key={i} src={toApiUrl(`/cdn/music/covers/${id}`)} alt="" className="h-full w-full object-cover" onError={(e) => { e.target.style.display = "none"; }} />
         ))}
       </div>
     );
   }
   if (songIds.length > 0) {
-    return <img src={`${CDN}/cdn/music/covers/${songIds[songIds.length - 1]}`} alt="" className="h-full w-full object-cover" onError={(e) => { e.target.style.display = "none"; }} />;
+    return <img src={toApiUrl(`/cdn/music/covers/${songIds[songIds.length - 1]}`)} alt="" className="h-full w-full object-cover" onError={(e) => { e.target.style.display = "none"; }} />;
   }
   return <Music2 size={14} className="text-white/20" />;
 }
@@ -61,7 +60,16 @@ function AddToPlaylistModal({ song, onClose }) {
     ]).then(([plRes, likedRes]) => {
       const owned = Array.isArray(plRes?.data) ? plRes.data : [];
       const collab = Array.isArray(plRes?.collaborated) ? plRes.collaborated : [];
-      setPlaylists([...owned, ...collab]);
+      const nextPlaylists = [...owned, ...collab];
+      setPlaylists(nextPlaylists);
+      setAddedTo(new Set(
+        nextPlaylists
+          .filter((playlist) => Array.isArray(playlist.songs) && playlist.songs.some((entry) => {
+            const playlistSongId = entry?.song?.id || entry?.songId || entry?.id || entry;
+            return playlistSongId === song.id;
+          }))
+          .map((playlist) => playlist._id || playlist.id)
+      ));
       const liked = likedRes?.data || [];
       setLikedCount(liked.length);
       if (liked.some((e) => (e.song?.id || e.songId) === song.id)) setLikedDone(true);
@@ -78,6 +86,18 @@ function AddToPlaylistModal({ song, onClose }) {
     setTimeout(() => setError(null), 3000);
   };
 
+  const localPlaylistMeta = useMemo(() => {
+    if (!song.local) return null;
+    return {
+      title: song.title || song.file_name || "Unknown",
+      artist: song.artist || "Unknown",
+      album: song.album || "",
+      duration: Number.isFinite(Number(song.duration)) ? Number(song.duration) : 0,
+      fileHash: song.file_hash || song.id?.replace(/^local:/, "") || "",
+      fileName: song.file_name || "",
+    };
+  }, [song]);
+
   const handleToggle = async (plId) => {
     const wasAdded = addedTo.has(plId);
     setAddedTo((prev) => {
@@ -87,7 +107,11 @@ function AddToPlaylistModal({ song, onClose }) {
     });
     try {
       if (wasAdded) await removeSongFromPlaylist(plId, song.id);
-      else await addSongsToPlaylist(plId, [song.id]);
+      else if (song.local) {
+        await addSongsToPlaylist(plId, [], [localPlaylistMeta]);
+      } else {
+        await addSongsToPlaylist(plId, [song.id]);
+      }
     } catch {
       setAddedTo((prev) => {
         const next = new Set(prev);

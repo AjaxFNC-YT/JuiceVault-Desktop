@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from "react";
-import { MoreHorizontal, Info, Heart, ListPlus, Download, FolderOpen, Loader2 } from "lucide-react";
+import { MoreHorizontal, Info, Heart, CirclePlus, Download, FolderOpen, Loader2, ListOrdered } from "lucide-react";
 import { likeSong, unlikeSong, downloadFile, showInExplorer } from "@/lib/api";
+import { usePlayer } from "@/stores/playerStore";
 
 function SongContextMenu({ song, onInfo, liked, onLikeChange, onAddToPlaylist }) {
+  const { addToQueue } = usePlayer();
   const [open, setOpen] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [liking, setLiking] = useState(false);
@@ -60,6 +62,11 @@ function SongContextMenu({ song, onInfo, liked, onLikeChange, onAddToPlaylist })
     onAddToPlaylist?.(song);
   };
 
+  const handleAddToQueue = () => {
+    addToQueue(song);
+    setOpen(false);
+  };
+
   return (
     <>
       <div className="relative flex-shrink-0">
@@ -85,7 +92,8 @@ function SongContextMenu({ song, onInfo, liked, onLikeChange, onAddToPlaylist })
               loading={liking}
               color={liked ? "text-red-400" : "text-pink-400"}
             />
-            <MenuItem icon={ListPlus} label="Add to Playlist" onClick={handleAddToPlaylist} color="text-purple-400" />
+            <MenuItem icon={ListOrdered} label="Add to Queue" onClick={handleAddToQueue} color="text-amber-400" />
+            <MenuItem icon={CirclePlus} label="Add to Playlist" onClick={handleAddToPlaylist} color="text-purple-400" />
             <MenuItem icon={song.local ? FolderOpen : Download} label={song.local ? "Open in Explorer" : "Download"} onClick={handleDownload} loading={downloading} color="text-emerald-400" />
           </div>
         )}

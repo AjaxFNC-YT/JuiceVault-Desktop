@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { motion } from "framer-motion";
-import { HardDrive, Search, RefreshCw, Music2, FolderOpen } from "lucide-react";
+import { HardDrive, Search, RefreshCw, Music2, FolderOpen, TriangleAlert } from "lucide-react";
 import { useLocalFiles } from "@/stores/localFilesStore";
 import { usePlayer } from "@/stores/playerStore";
 import SongList from "@/components/SongList";
@@ -8,7 +8,7 @@ import { useFuzzySearchEnabled } from "@/hooks/useFuzzySearch";
 import { searchCollection } from "@/lib/search";
 
 function LocalFiles({ onInfo, onAddToPlaylist }) {
-  const { enabled, files, scanning, scanProgress, scanAllSources, sources } = useLocalFiles();
+  const { enabled, files, scanning, scanProgress, scanAllSources, sources, rescanRequiredCount } = useLocalFiles();
   const { playTrack } = usePlayer();
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState("list");
@@ -19,7 +19,12 @@ function LocalFiles({ onInfo, onAddToPlaylist }) {
     return searchCollection(
       files,
       query,
-      (file) => [file.title, file.artist, file.album, file.file_name],
+      (file) => [
+        { value: file.title, mode: "fuzzy", priority: 0 },
+        { value: file.file_name, mode: "fuzzy", priority: 1 },
+        { value: file.artist, mode: "exact", priority: 3 },
+        { value: file.album, mode: "exact", priority: 4 },
+      ],
       { fuzzy: fuzzySearch },
     );
   }, [files, query, fuzzySearch]);
@@ -60,7 +65,7 @@ function LocalFiles({ onInfo, onAddToPlaylist }) {
           <p className="text-sm text-white/30 mt-0.5">{files.length} files indexed</p>
         </div>
         <button
-          onClick={scanAllSources}
+          onClick={() => scanAllSources({ allowUpdates: true })}
           disabled={scanning}
           className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/[0.06] border border-white/[0.08] text-[12px] text-white/50 hover:text-white/80 hover:bg-white/[0.1] transition-colors disabled:opacity-50"
         >
@@ -79,6 +84,35 @@ function LocalFiles({ onInfo, onAddToPlaylist }) {
           className="w-full rounded-xl bg-white/[0.04] border border-white/[0.06] py-2.5 pl-9 pr-4 text-[13px] text-white placeholder:text-white/20 outline-none focus:border-white/[0.12]"
         />
       </div>
+
+      {rescanRequiredCount > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-4 flex items-center justify-between rounded-xl border px-4 py-3"
+          style={{
+            background: "rgba(245, 158, 11, 0.08)",
+            borderColor: "rgba(245, 158, 11, 0.18)",
+          }}
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-amber-400/[0.12]">
+              <TriangleAlert size={16} className="text-amber-300" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[13px] font-medium text-white/82">Metadata changed for {rescanRequiredCount} local {rescanRequiredCount === 1 ? "song" : "songs"}</p>
+              <p className="text-[11px] text-white/40">New songs were added automatically. Run a full rescan to refresh changed titles, tags, or covers.</p>
+            </div>
+          </div>
+          <button
+            onClick={() => scanAllSources({ allowUpdates: true })}
+            disabled={scanning}
+            className="ml-3 flex-shrink-0 rounded-lg border border-amber-300/20 bg-amber-300/[0.08] px-3 py-1.5 text-[11px] font-semibold text-amber-100 transition-colors hover:bg-amber-300/[0.12] disabled:opacity-50"
+          >
+            Rescan Metadata
+          </button>
+        </motion.div>
+      )}
 
       {scanning && !files.length ? (
         <div className="flex flex-col items-center justify-center py-16 text-center">

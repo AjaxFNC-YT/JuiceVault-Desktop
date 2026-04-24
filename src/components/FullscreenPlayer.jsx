@@ -2,15 +2,15 @@ import { useRef, useCallback, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1,
-  Volume2, VolumeX, Minimize2, SlidersHorizontal, Info, Download, FolderOpen, Check, Music2, Radio, Users,
+  Volume2, VolumeX, AudioWaveform, Info, Download, FolderOpen, CirclePlus, Music2, Radio, Users, ListOrdered,
 } from "lucide-react";
 import { usePlayer } from "@/stores/playerStore";
 import { useTheme, hexToRgb } from "@/stores/themeStore";
 import { downloadFile, showInExplorer, voteSkipRadio } from "@/lib/api";
 import PlayerPreferencesModal from "@/components/PlayerPreferencesModal";
+import QueuePanel from "@/components/QueuePanel";
 import { useIsMobile } from "@/hooks/useMobile";
-
-const CDN = "https://api.juicevault.xyz";
+import { toApiUrl } from "@/lib/platform";
 
 function fmt(s) {
   if (!s || !isFinite(s)) return "0:00";
@@ -41,9 +41,10 @@ function FullscreenPlayer({ onClose, onInfo, onAddToPlaylist }) {
   const [showWaveform, setShowWaveform] = useState(true);
   const showWaveformRef = useRef(true);
   const [showPrefs, setShowPrefs] = useState(false);
+  const [showQueue, setShowQueue] = useState(false);
 
   const track = state.currentTrack;
-  const cover = track?.cover ? (track.local ? track.cover : `${CDN}${track.cover}`) : null;
+  const cover = track?.cover ? (track.local ? track.cover : toApiUrl(track.cover)) : null;
   const pct = state.duration > 0 ? (state.progress / state.duration) * 100 : 0;
 
   useEffect(() => { ensureAnalyser(); }, [ensureAnalyser]);
@@ -246,11 +247,16 @@ function FullscreenPlayer({ onClose, onInfo, onAddToPlaylist }) {
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
           </button>
           <button onClick={() => setShowPrefs(true)} className="w-10 h-10 rounded-xl flex items-center justify-center text-white/60 hover:text-white transition-all hover:scale-105" style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)" }} title="Player Preferences">
-            <SlidersHorizontal size={18} />
+            <AudioWaveform size={18} />
           </button>
         </div>
 
         <div className="absolute top-6 sm:top-14 right-4 sm:right-6 z-20 flex gap-2">
+          {!state.isRadio && (
+            <button onClick={() => setShowQueue(true)} className="w-10 h-10 rounded-xl flex items-center justify-center text-white/60 hover:text-white transition-all hover:scale-105" style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)" }} title="Queue">
+              <ListOrdered size={18} />
+            </button>
+          )}
           {!track?.local && (
             <button onClick={() => track && onInfo?.(track.id)} className="w-10 h-10 rounded-xl flex items-center justify-center text-white/60 hover:text-white transition-all hover:scale-105" style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)" }} title="Song Info">
               <Info size={18} />
@@ -321,7 +327,7 @@ function FullscreenPlayer({ onClose, onInfo, onAddToPlaylist }) {
             {!isMobile && (
               <div className="absolute right-0 flex items-center gap-1">
                 <button onClick={() => track && onAddToPlaylist?.({ id: track.id, title: track.title, artist: track.artist, cover: track.cover })} className="w-10 h-10 rounded-xl flex items-center justify-center text-white/60 hover:text-white transition-all hover:scale-105" style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)" }} title="Add to Playlist">
-                  <Check size={18} />
+                  <CirclePlus size={18} />
                 </button>
                 <button
                   onClick={() => { showWaveformRef.current = !showWaveform; setShowWaveform(!showWaveform); }}
@@ -378,6 +384,12 @@ function FullscreenPlayer({ onClose, onInfo, onAddToPlaylist }) {
       <AnimatePresence>
         {showPrefs && <PlayerPreferencesModal onClose={() => setShowPrefs(false)} />}
       </AnimatePresence>
+      <QueuePanel
+        open={showQueue}
+        onClose={() => setShowQueue(false)}
+        onInfo={onInfo}
+        onAddToPlaylist={onAddToPlaylist}
+      />
     </motion.div>
   );
 }

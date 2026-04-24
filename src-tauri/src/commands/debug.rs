@@ -42,32 +42,6 @@ pub async fn debug_network() -> Result<String, String> {
     }
     log.push(format!(""));
 
-    log.push(format!("--- App Resolver ---"));
-    match resolve_api_addrs(true) {
-        Ok(addrs) if !addrs.is_empty() => {
-            log.push(format!("IPv4-only override: {}", format_socket_addrs(&addrs).join(", ")));
-        }
-        Ok(_) => {
-            log.push(format!("IPv4-only override: no IPv4 addresses available"));
-        }
-        Err(err) => {
-            log.push(format!("IPv4-only override FAIL: {}", err));
-        }
-    }
-
-    match resolve_api_addrs(false) {
-        Ok(addrs) if !addrs.is_empty() => {
-            log.push(format!("Fallback order: {}", format_socket_addrs(&addrs).join(", ")));
-        }
-        Ok(_) => {
-            log.push(format!("Fallback order: no addresses resolved"));
-        }
-        Err(err) => {
-            log.push(format!("Fallback order FAIL: {}", err));
-        }
-    }
-    log.push(format!(""));
-
     // 2) TCP connect
     log.push(format!("--- TCP Connect ---"));
     let tcp_start = Instant::now();
@@ -117,85 +91,14 @@ pub async fn debug_network() -> Result<String, String> {
     }
     log.push(format!(""));
 
-    log.push(format!("--- HTTP Request (reqwest + rustls + IPv4 only) ---"));
-    let rustls_ipv4_start = Instant::now();
-    let rustls_ipv4_client = {
-        let mut builder = reqwest::Client::builder().use_rustls_tls();
-        if let Ok(addrs) = resolve_api_addrs(true) {
-            if !addrs.is_empty() {
-                builder = builder.resolve_to_addrs(host, &addrs);
-            }
-        }
-        builder
-            .build()
-            .map_err(|e| format!("rustls IPv4 client build error: {}", e))?
-    };
-
-    match rustls_ipv4_client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .send()
-        .await
-    {
-        Ok(resp) => {
-            log.push(format!("OK ({:.0?}) Status: {}", rustls_ipv4_start.elapsed(), resp.status()));
-        }
-        Err(e) => {
-            log.push(format!("FAIL: {}", e));
-            if let Some(source) = e.source() {
-                log.push(format!("Source: {}", source));
-                if let Some(inner) = source.source() {
-                    log.push(format!("Inner: {}", inner));
-                }
-            }
-        }
-    }
-    log.push(format!(""));
-
-    log.push(format!("--- HTTP Request (reqwest + native-tls + IPv4 only) ---"));
-    let native_ipv4_start = Instant::now();
-    let native_ipv4_client = {
-        let mut builder = reqwest::Client::builder().use_native_tls();
-        if let Ok(addrs) = resolve_api_addrs(true) {
-            if !addrs.is_empty() {
-                builder = builder.resolve_to_addrs(host, &addrs);
-            }
-        }
-        builder
-            .build()
-            .map_err(|e| format!("native IPv4 client build error: {}", e))?
-    };
-
-    match native_ipv4_client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .send()
-        .await
-    {
-        Ok(resp) => {
-            log.push(format!("OK ({:.0?}) Status: {}", native_ipv4_start.elapsed(), resp.status()));
-        }
-        Err(e) => {
-            log.push(format!("FAIL: {}", e));
-            if let Some(source) = e.source() {
-                log.push(format!("Source: {}", source));
-                if let Some(inner) = source.source() {
-                    log.push(format!("Inner: {}", inner));
-                }
-            }
-        }
-    }
-    log.push(format!(""));
-
-    // 4) reqwest HTTP request (same client the app uses)
-    log.push(format!("--- HTTP Request (reqwest + native-tls) ---"));
-    let http_start = Instant::now();
-    let client = reqwest::Client::builder()
-        .use_native_tls()
+    // 4) reqwest (the client the app actually uses)
+    log.push(format!("--- HTTP Request (reqwest rustls) ---"));
+    let reqwest_start = Instant::now();
+    let reqwest_client = reqwest::Client::builder()
         .build()
-        .map_err(|e| format!("Client build error: {}", e))?;
+        .map_err(|e| format!("reqwest client build error: {}", e))?;
 
-    match client
+    match reqwest_client
         .post(&url)
         .header("Content-Type", "application/json")
         .send()
@@ -205,7 +108,7 @@ pub async fn debug_network() -> Result<String, String> {
             let status = resp.status();
             let headers = format!("{:?}", resp.headers());
             let body = resp.text().await.unwrap_or_else(|e| format!("body read error: {}", e));
-            log.push(format!("OK ({:.0?})", http_start.elapsed()));
+            log.push(format!("OK ({:.0?})", reqwest_start.elapsed()));
             log.push(format!("Status: {}", status));
             log.push(format!("Headers: {}", &headers[..headers.len().min(300)]));
             log.push(format!("Body: {}", &body[..body.len().min(500)]));
@@ -234,33 +137,7 @@ pub async fn debug_network() -> Result<String, String> {
     }
     log.push(format!(""));
 
-    // 5) try rustls as comparison
-    log.push(format!("--- HTTP Request (reqwest + rustls) ---"));
-    let rustls_start = Instant::now();
-    let rustls_client = reqwest::Client::builder()
-        .use_rustls_tls()
-        .build()
-        .map_err(|e| format!("rustls client build error: {}", e))?;
-
-    match rustls_client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .send()
-        .await
-    {
-        Ok(resp) => {
-            log.push(format!("OK ({:.0?}) Status: {}", rustls_start.elapsed(), resp.status()));
-        }
-        Err(e) => {
-            log.push(format!("FAIL: {}", e));
-            if let Some(source) = e.source() {
-                log.push(format!("Source: {}", source));
-            }
-        }
-    }
-    log.push(format!(""));
-
-    // 6) environment checks
+    // 5) environment checks
     log.push(format!("--- Environment ---"));
     for var in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR"] {
         if let Ok(val) = std::env::var(var) {

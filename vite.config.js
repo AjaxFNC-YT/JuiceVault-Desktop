@@ -16,6 +16,14 @@ export default defineConfig(async () => ({
     port: 1420,
     strictPort: true,
     host: host || false,
+    proxy: {
+      "/proxy-api": {
+        target: "https://api.juicevault.xyz",
+        changeOrigin: true,
+        secure: true,
+        rewrite: (path) => path.replace(/^\/proxy-api/, ""),
+      },
+    },
     hmr: host
       ? {
           protocol: "ws",

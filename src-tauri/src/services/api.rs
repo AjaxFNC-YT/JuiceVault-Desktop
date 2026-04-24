@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::net::{SocketAddr, ToSocketAddrs};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use reqwest::Client;
@@ -9,13 +10,31 @@ use crate::models::user::{ApiResponse, AuthData, TokenData};
 pub const API_HOST: &str = "api.juicevault.xyz";
 const API_BASE: &str = "https://api.juicevault.xyz";
 
-pub struct ApiClient {
-    clients: Vec<NamedClient>,
-}
+pub struct ApiClient;
 
-struct NamedClient {
-    label: &'static str,
-    client: Client,
+pub fn resolve_api_addrs(ipv4_only: bool) -> Result<Vec<SocketAddr>, String> {
+    let addrs = format!("{}:443", API_HOST)
+        .to_socket_addrs()
+        .map_err(|e| format!("DNS resolution failed: {}", e))?;
+
+    let mut addrs: Vec<SocketAddr> = addrs.collect();
+    let mut seen = HashSet::new();
+    addrs.retain(|addr| seen.insert(*addr));
+
+    if ipv4_only {
+        let ipv4_addrs: Vec<SocketAddr> = addrs
+            .iter()
+            .copied()
+            .filter(SocketAddr::is_ipv4)
+            .collect();
+
+        if !ipv4_addrs.is_empty() {
+            return Ok(ipv4_addrs);
+        }
+    }
+
+    addrs.sort_by_key(|addr| if addr.is_ipv4() { 0 } else { 1 });
+    Ok(addrs)
 }
 
 fn truncate_str(s: &str, max: usize) -> &str {
@@ -66,119 +85,46 @@ pub fn extract_ca_pub(jwt: &str) -> Option<String> {
     extract_ca(jwt)
 }
 
-pub fn resolve_api_addrs(ipv4_only: bool) -> Result<Vec<SocketAddr>, String> {
-    let addrs = format!("{}:443", API_HOST)
-        .to_socket_addrs()
-        .map_err(|e| format!("DNS resolution failed: {}", e))?;
-
-    let mut addrs: Vec<SocketAddr> = addrs.collect();
-    let mut seen = HashSet::new();
-    addrs.retain(|addr| seen.insert(*addr));
-
-    if ipv4_only {
-        let ipv4_addrs: Vec<SocketAddr> = addrs
-            .iter()
-            .copied()
-            .filter(SocketAddr::is_ipv4)
-            .collect();
-
-        if !ipv4_addrs.is_empty() {
-            return Ok(ipv4_addrs);
-        }
-    }
-
-    addrs.sort_by_key(|addr| if addr.is_ipv4() { 0 } else { 1 });
-    Ok(addrs)
-}
-
-fn build_named_client(
-    label: &'static str,
-    use_rustls: bool,
-    ipv4_only: bool,
-) -> Option<NamedClient> {
-    let mut builder = Client::builder()
-        .connect_timeout(Duration::from_secs(8))
-        .timeout(Duration::from_secs(20));
-
-    if use_rustls {
-        builder = builder.use_rustls_tls();
-    } else {
-        builder = builder.use_native_tls();
-    }
-
-    if let Ok(addrs) = resolve_api_addrs(ipv4_only) {
-        if !addrs.is_empty() {
-            builder = builder.resolve_to_addrs(API_HOST, &addrs);
-        }
-    }
-
-    builder.build().ok().map(|client| NamedClient { label, client })
-}
-
-fn build_api_clients() -> Vec<NamedClient> {
-    let mut clients = Vec::new();
-
-    if let Ok(ipv4_addrs) = resolve_api_addrs(true) {
-        if !ipv4_addrs.is_empty() {
-            if let Some(client) = build_named_client("rustls-ipv4", true, true) {
-                clients.push(client);
-            }
-            if let Some(client) = build_named_client("native-tls-ipv4", false, true) {
-                clients.push(client);
-            }
-        }
-    }
-
-    if let Some(client) = build_named_client("rustls-default", true, false) {
-        clients.push(client);
-    }
-    if let Some(client) = build_named_client("native-tls-default", false, false) {
-        clients.push(client);
-    }
-
-    if clients.is_empty() {
-        clients.push(NamedClient {
-            label: "default",
-            client: Client::new(),
-        });
-    }
-
-    clients
-}
-
-fn format_send_error(errors: &[String]) -> String {
-    if errors.is_empty() {
-        return "Network error: request failed before any connection attempt".into();
-    }
-
-    format!(
-        "Network error: failed to reach {} after retrying secure connection paths. {}",
-        API_HOST,
-        errors.join(" | ")
-    )
+/// Shared HTTP client that impersonates Chrome's TLS fingerprint.
+/// This prevents Cloudflare bot protection from blocking the connection.
+fn shared_client() -> &'static Client {
+    static CLIENT: OnceLock<Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        Client::builder()
+            .connect_timeout(Duration::from_secs(8))
+            .timeout(Duration::from_secs(20))
+            .build()
+            .expect("failed to build HTTP client")
+    })
 }
 
 impl ApiClient {
     pub fn new() -> Self {
-        Self {
-            clients: build_api_clients(),
-        }
+        Self
     }
 
     pub async fn send<F>(&self, build_request: F) -> Result<reqwest::Response, String>
     where
         F: Fn(&Client) -> reqwest::RequestBuilder,
     {
-        let mut errors = Vec::with_capacity(self.clients.len());
-
-        for named in &self.clients {
-            match build_request(&named.client).send().await {
-                Ok(resp) => return Ok(resp),
-                Err(err) => errors.push(format!("{}: {}", named.label, err)),
+        let client = shared_client();
+        build_request(client).send().await.map_err(|e| {
+            let err_str = e.to_string();
+            if err_str.contains("InvalidContentType")
+                || err_str.contains("invalid token")
+                || err_str.contains("SEC_E_")
+                || err_str.contains("certificate")
+            {
+                format!(
+                    "Connection blocked: your antivirus or firewall is interfering with secure connections to {}. \
+                     Try adding JuiceVault to your antivirus exceptions, or disable SSL/HTTPS inspection. \
+                     Details: {}",
+                    API_HOST, err_str
+                )
+            } else {
+                format!("Network error: failed to reach {}. {}", API_HOST, err_str)
             }
-        }
-
-        Err(format_send_error(&errors))
+        })
     }
 
     pub async fn get_login_token(&self) -> Result<(String, String), String> {

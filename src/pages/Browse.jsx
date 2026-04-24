@@ -45,7 +45,13 @@ function Browse({ onInfo, onAddToPlaylist }) {
       const matched = searchCollection(
         featured,
         q,
-        (song) => [song.title, song.artist, song.album, ...(song.alt_names || [])],
+        (song) => [
+          { value: song.title, mode: "fuzzy", priority: 0 },
+          { value: song.file_name, mode: "fuzzy", priority: 1 },
+          ...(song.alt_names || []).map((name) => ({ value: name, mode: "fuzzy", priority: 2 })),
+          { value: song.artist, mode: "exact", priority: 3 },
+          { value: song.album, mode: "exact", priority: 4 },
+        ],
         { fuzzy: fuzzySearch },
       );
       setResults(matched.filter((song) => song.title));
@@ -91,6 +97,7 @@ function Browse({ onInfo, onAddToPlaylist }) {
         return false;
       });
     }
+    if (query.trim()) return out;
     return [...out].sort((a, b) => {
       if (sortBy === "a-z") return (a.title || "").localeCompare(b.title || "");
       if (sortBy === "z-a") return (b.title || "").localeCompare(a.title || "");
@@ -192,7 +199,7 @@ function Browse({ onInfo, onAddToPlaylist }) {
                   {!query.trim() && !inSessionEdits && <p className="text-[12px] text-white/20 mb-3">Popular songs</p>}
                   {!query.trim() && inSessionEdits && <p className="text-[12px] text-white/20 mb-3">All session edits</p>}
                   {query.trim() && <p className="text-[12px] text-white/20 mb-3">{displaySongs.length} result{displaySongs.length !== 1 ? "s" : ""}</p>}
-                  <SongList songs={displaySongs} viewMode={viewMode} onViewChange={setViewMode} onInfo={onInfo} onAddToPlaylist={onAddToPlaylist} />
+                  <SongList songs={displaySongs} viewMode={viewMode} onViewChange={setViewMode} onInfo={onInfo} onAddToPlaylist={onAddToPlaylist} playSource="search" />
                 </>
               ) : query.trim() ? (
                 <p className="text-center text-white/25 py-16 text-sm">No results found</p>

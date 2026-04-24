@@ -78,12 +78,36 @@ pub async fn get_tracker_info(song_id: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn log_listen(access_token: String, song_id: String, duration: u32, completed: bool) -> Result<Value, String> {
+pub async fn log_listen(
+    access_token: String,
+    song_id: String,
+    duration: u32,
+    completed: bool,
+    source: String,
+    playlist_id: Option<String>,
+) -> Result<Value, String> {
     let client = ApiClient::new();
-    client.authed_post("/user/history", &access_token, serde_json::json!({
+    let mut body = serde_json::json!({
         "songId": song_id,
         "duration": duration,
         "completed": completed,
-        "source": "app"
-    })).await
+        "source": source
+    });
+
+    if let Some(playlist_id) = playlist_id {
+        body["playlistId"] = serde_json::json!(playlist_id);
+    }
+
+    match client.authed_post("/user/history", &access_token, body.clone()).await {
+        Ok(value) => Ok(value),
+        Err(error) => Err(format!(
+            "Listen log failed. songId={}, duration={}, completed={}, source={}, playlistId={}, reason={}",
+            body.get("songId").and_then(|v| v.as_str()).unwrap_or("unknown"),
+            body.get("duration").and_then(|v| v.as_u64()).unwrap_or(0),
+            body.get("completed").and_then(|v| v.as_bool()).unwrap_or(false),
+            body.get("source").and_then(|v| v.as_str()).unwrap_or("unknown"),
+            body.get("playlistId").and_then(|v| v.as_str()).unwrap_or("none"),
+            error,
+        )),
+    }
 }

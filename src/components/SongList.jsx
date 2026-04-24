@@ -2,8 +2,7 @@ import { useState, useEffect, useRef, useCallback, memo } from "react";
 import { Play, Music2, LayoutGrid, List } from "lucide-react";
 import { usePlayer } from "@/stores/playerStore";
 import SongContextMenu from "@/components/SongContextMenu";
-
-const CDN = "https://api.juicevault.xyz";
+import { toApiUrl } from "@/lib/platform";
 const ROW_H = 52;
 const OVERSCAN = 20;
 const CARD_BATCH = 60;
@@ -17,7 +16,7 @@ function getScrollParent(el) {
   return document.documentElement;
 }
 
-function SongList({ songs, viewMode, onViewChange, onInfo, onAddToPlaylist, likedIds = new Set(), onLikeChange }) {
+function SongList({ songs, viewMode, onViewChange, onInfo, onAddToPlaylist, likedIds = new Set(), onLikeChange, playSource = "library" }) {
   const { playTrack } = usePlayer();
   const wrapRef = useRef(null);
   const [visRange, setVisRange] = useState({ s: 0, e: 100 });
@@ -65,8 +64,8 @@ function SongList({ songs, viewMode, onViewChange, onInfo, onAddToPlaylist, like
   }, [songs.length, viewMode, cardLimit]);
 
   const handlePlay = useCallback((idx) => {
-    playTrack(songs[idx], songs, idx);
-  }, [playTrack, songs]);
+    playTrack(songs[idx], songs, idx, playSource);
+  }, [playTrack, songs, playSource]);
 
   return (
     <div ref={wrapRef}>
@@ -109,7 +108,7 @@ function SongList({ songs, viewMode, onViewChange, onInfo, onAddToPlaylist, like
 }
 
 const MemoRow = memo(function SongRow({ song, index, onPlay, onInfo, onAddToPlaylist, liked, onLikeChange }) {
-  const cover = song.cover ? (song.local ? song.cover : `${CDN}${song.cover}`) : null;
+  const cover = song.cover ? (song.local ? song.cover : toApiUrl(song.cover)) : null;
   return (
     <div className="group flex items-center gap-3 rounded-md px-3 py-2 hover:bg-white/[0.05] text-left w-full h-full">
       <button onClick={() => onPlay(index)} className="flex items-center gap-3 min-w-0 flex-1 text-left">
@@ -139,7 +138,7 @@ const MemoRow = memo(function SongRow({ song, index, onPlay, onInfo, onAddToPlay
 });
 
 const MemoCard = memo(function SongCard({ song, index, onPlay, onInfo, onAddToPlaylist, liked, onLikeChange }) {
-  const cover = song.cover ? (song.local ? song.cover : `${CDN}${song.cover}`) : null;
+  const cover = song.cover ? (song.local ? song.cover : toApiUrl(song.cover)) : null;
   return (
     <div className="group relative flex flex-col rounded-xl bg-white/[0.03] border border-white/[0.04] p-3 hover:bg-white/[0.06] text-left">
       <button onClick={() => onPlay(index)} className="text-left">

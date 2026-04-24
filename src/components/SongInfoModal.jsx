@@ -8,8 +8,7 @@ import {
 import { getSongMetadata, getTrackerInfo, downloadFile } from "@/lib/api";
 import { useTheme, hexToRgb } from "@/stores/themeStore";
 import { useIsMobile } from "@/hooks/useMobile";
-
-const CDN = "https://api.juicevault.xyz";
+import { toApiUrl } from "@/lib/platform";
 
 function norm(key) {
   return key.replace(/[-_ ]/g, "").toLowerCase();
@@ -118,7 +117,7 @@ function SongInfoModal({ songId, onClose }) {
     });
   }, [songId]);
 
-  const cover = meta?.cover ? `${CDN}${meta.cover}` : null;
+  const cover = meta?.cover ? toApiUrl(meta.cover) : null;
 
   const handleDownload = async () => {
     if (downloading || !meta) return;
