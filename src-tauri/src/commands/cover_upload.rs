@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-use std::sync::Mutex;
-use std::path::PathBuf;
-use serde_json::Value;
 use reqwest::multipart;
+use serde_json::Value;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Mutex;
 
 pub struct CoverUploadCache {
     pub urls: Mutex<HashMap<String, String>>,
@@ -10,13 +10,15 @@ pub struct CoverUploadCache {
 
 impl CoverUploadCache {
     pub fn new() -> Self {
-        Self { urls: Mutex::new(HashMap::new()) }
+        Self {
+            urls: Mutex::new(HashMap::new()),
+        }
     }
 }
 
 fn cover_cache_dir() -> PathBuf {
-    let mut dir = std::env::temp_dir();
-    dir.push("juicevault_covers");
+    let mut dir = crate::utils::config::app_data_dir().unwrap_or_else(std::env::temp_dir);
+    dir.push("covers");
     dir
 }
 
@@ -57,7 +59,10 @@ pub async fn upload_cover_temp(
         .await
         .map_err(|e| format!("Upload failed: {}", e))?;
 
-    let url = resp.text().await.map_err(|e| format!("Read response: {}", e))?;
+    let url = resp
+        .text()
+        .await
+        .map_err(|e| format!("Read response: {}", e))?;
     let url = url.trim().to_string();
 
     if !url.starts_with("https://") {

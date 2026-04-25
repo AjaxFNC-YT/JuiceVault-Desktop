@@ -1,6 +1,6 @@
 [package]
 name = "juicevault-desktop"
-version = "1.2.0"
+version = "1.2.1"
 description = "JuiceVault Desktop"
 authors = ["you"]
 edition = "2021"
@@ -26,6 +26,6 @@ discord-rich-presence = "0.2"
 sha2 = "0.10"
 lofty = "0.21"
 walkdir = "2"
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
 rayon = "1"
 tauri-plugin-nativeaudio = { path = "../tauri-plugin-nativeaudio" }

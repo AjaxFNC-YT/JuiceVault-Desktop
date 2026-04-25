@@ -50,6 +50,7 @@ pub fn run() {
             commands::profile::get_current_user,
             commands::profile::update_user_preferences,
             commands::local_files::scan_local_directory,
+            commands::local_files::get_local_file_cover,
             commands::local_files::hash_single_file,
             commands::local_files::show_in_explorer,
             commands::discord::init_discord_rpc,

@@ -180,12 +180,12 @@ function Dashboard({ user, onLogout }) {
         )}
 
         <main className="relative flex flex-1 flex-col overflow-hidden">
-          <div className={`flex-1 overflow-y-auto ${isMobile ? 'pb-24' : 'pb-20'} ${activePage === "Overview" ? "" : "hidden"}`}>
-            <Overview user={user} />
-          </div>
-
           <AnimatePresence mode="wait">
-            {activePage !== "Overview" && (
+            {activePage === "Overview" ? (
+              <motion.div key="Overview" className={`flex-1 overflow-y-auto ${isMobile ? 'pb-24' : 'pb-20'}`} {...pageFade}>
+                <Overview user={user} />
+              </motion.div>
+            ) : (
               <motion.div key={activePage} className={`flex-1 overflow-y-auto ${isMobile ? 'pb-24' : 'pb-20'}`} {...pageFade}>
                 {renderPage()}
               </motion.div>

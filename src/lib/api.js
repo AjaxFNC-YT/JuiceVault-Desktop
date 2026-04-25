@@ -175,12 +175,16 @@ export async function updateUserPreferences(preferences) {
   return authedInvoke("update_user_preferences", (accessToken) => ({ accessToken, preferences }));
 }
 
-export async function scanLocalDirectory(directory, knownFiles = null, allowUpdates = false) {
-  return invoke("scan_local_directory", { directory, knownFiles, allowUpdates });
+export async function scanLocalDirectory(directory, allowUpdates = false) {
+  return invoke("scan_local_directory", { directory, allowUpdates });
 }
 
 export async function hashSingleFile(filePath) {
   return invoke("hash_single_file", { filePath });
+}
+
+export async function getLocalFileCover(filePath, fileHash) {
+  return invoke("get_local_file_cover", { filePath, fileHash });
 }
 
 export async function showInExplorer(filePath) {

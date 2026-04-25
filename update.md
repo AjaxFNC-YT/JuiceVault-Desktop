@@ -1,4 +1,4 @@
-<@&1480705891648016536> 
+﻿<@&1480705891648016536> 
 
 ## JuiceVault - Desktop V1.2.0 is now live:
 Here are the changes:
@@ -28,6 +28,7 @@ Here are the changes:
 > **Other**
 > - General bug fixes, polish, and stability improvements across the desktop app
 
-The app should prompt the update on app launch, but if it doesn’t, redownload here: https://juicevault.xyz/download
+The app should prompt the update on app launch, but if it doesnâ€™t, redownload here: https://juicevault.xyz/download
 
 Got a suggestion, found a bug, or need help installing the iOS app? Head over to <#1480702277919445125> and let us know.
+

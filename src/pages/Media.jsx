@@ -16,6 +16,8 @@ const CDN = "https://api.juicevault.xyz";
 const ROW_H = 52;
 const OVERSCAN = 20;
 const CARD_BATCH = 40;
+const INITIAL_MEDIA_LIMIT = 500;
+const MEDIA_INCREMENT = 500;
 
 function getScrollParent(el) {
   let p = el?.parentElement;
@@ -33,6 +35,7 @@ function Media({ onMediaView }) {
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [viewing, setViewing] = useState(null);
+  const [loadedLimit, setLoadedLimit] = useState(INITIAL_MEDIA_LIMIT);
   const fuzzySearch = useFuzzySearchEnabled();
 
   useEffect(() => {
@@ -68,7 +71,14 @@ function Media({ onMediaView }) {
     return list;
   }, [media, typeFilter, query, fuzzySearch]);
 
-  useEffect(() => { setCardLimit(CARD_BATCH); }, [filtered, viewMode]);
+  const displayMedia = useMemo(() => filtered.slice(0, loadedLimit), [filtered, loadedLimit]);
+  const canLoadMore = loadedLimit < filtered.length;
+
+  useEffect(() => {
+    setLoadedLimit(query.trim() || typeFilter !== "all" ? MEDIA_INCREMENT : INITIAL_MEDIA_LIMIT);
+  }, [query, typeFilter]);
+
+  useEffect(() => { setCardLimit(CARD_BATCH); }, [displayMedia, viewMode]);
 
   useEffect(() => {
     if (viewMode !== "list") return;
@@ -82,7 +92,7 @@ function Media({ onMediaView }) {
       const off = sr.top - wr.top;
       const vh = sp === document.documentElement ? window.innerHeight : sp.clientHeight;
       const s = Math.max(0, Math.floor(off / ROW_H) - OVERSCAN);
-      const e = Math.min(filtered.length, Math.ceil((off + vh) / ROW_H) + OVERSCAN);
+      const e = Math.min(displayMedia.length, Math.ceil((off + vh) / ROW_H) + OVERSCAN);
       setVisRange({ s, e });
     };
 
@@ -90,10 +100,10 @@ function Media({ onMediaView }) {
     window.addEventListener("resize", update, { passive: true });
     update();
     return () => { sp.removeEventListener("scroll", update); window.removeEventListener("resize", update); };
-  }, [filtered.length, viewMode]);
+  }, [displayMedia.length, viewMode]);
 
   useEffect(() => {
-    if (viewMode !== "card" || cardLimit >= filtered.length) return;
+    if (viewMode !== "card" || cardLimit >= displayMedia.length) return;
     const el = wrapRef.current;
     if (!el) return;
     const sp = getScrollParent(el);
@@ -102,12 +112,12 @@ function Media({ onMediaView }) {
       const h = sp === document.documentElement ? document.body.scrollHeight : sp.scrollHeight;
       const st = sp === document.documentElement ? window.scrollY : sp.scrollTop;
       const ch = sp === document.documentElement ? window.innerHeight : sp.clientHeight;
-      if (st + ch > h - 600) setCardLimit((c) => Math.min(c + CARD_BATCH, filtered.length));
+      if (st + ch > h - 600) setCardLimit((c) => Math.min(c + CARD_BATCH, displayMedia.length));
     };
 
     sp.addEventListener("scroll", onScroll, { passive: true });
     return () => sp.removeEventListener("scroll", onScroll);
-  }, [filtered.length, viewMode, cardLimit]);
+  }, [displayMedia.length, viewMode, cardLimit]);
 
   if (loading) {
     return (
@@ -177,8 +187,8 @@ function Media({ onMediaView }) {
 
       <div ref={wrapRef}>
         {viewMode === "list" ? (
-          <div style={{ height: filtered.length * ROW_H, position: "relative" }}>
-            {filtered.slice(visRange.s, visRange.e).map((item, i) => {
+          <div style={{ height: displayMedia.length * ROW_H, position: "relative" }}>
+            {displayMedia.slice(visRange.s, visRange.e).map((item, i) => {
               const idx = visRange.s + i;
               return (
                 <div key={item.id} style={{ position: "absolute", top: idx * ROW_H, left: 0, right: 0, height: ROW_H }}>
@@ -189,12 +199,23 @@ function Media({ onMediaView }) {
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-            {filtered.slice(0, cardLimit).map((item) => (
+            {displayMedia.slice(0, cardLimit).map((item) => (
               <MemoMediaCard key={item.id} item={item} onClick={setViewing} />
             ))}
           </div>
         )}
       </div>
+
+      {canLoadMore && (
+        <div className="mt-5 flex justify-center">
+          <button
+            onClick={() => setLoadedLimit((limit) => Math.min(limit + MEDIA_INCREMENT, filtered.length))}
+            className="rounded-xl bg-white/[0.05] border border-white/[0.08] px-4 py-2 text-[12px] text-white/50 hover:text-white/70 hover:bg-white/[0.08] transition-colors"
+          >
+            Load more media ({Math.min(MEDIA_INCREMENT, filtered.length - loadedLimit).toLocaleString()} more)
+          </button>
+        </div>
+      )}
 
       <AnimatePresence>
         {viewing && <MediaViewer item={viewing} onClose={() => setViewing(null)} />}

@@ -1,4 +1,4 @@
-import { createContext, useContext, useReducer, useCallback, useEffect, useRef } from "react";
+import { createContext, useContext, useReducer, useCallback, useEffect, useMemo, useRef } from "react";
 import { scanLocalDirectory, updateUserPreferences } from "@/lib/api";
 import { listen } from "@tauri-apps/api/event";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -7,6 +7,7 @@ const LocalFilesContext = createContext(null);
 const LOCAL_FILES_CACHE_KEY = "localFilesIndex";
 const LOCAL_FILES_MANIFEST_KEY = "localFilesManifest";
 const MAX_LOCAL_FILES_CACHE_BYTES = 4 * 1024 * 1024;
+const PERSIST_DEBOUNCE_MS = 1000;
 
 function readJsonStorage(key, fallback) {
   try {
@@ -72,21 +73,26 @@ function normalizeCachedFiles(files) {
   });
 }
 
-const initialState = {
-  enabled: readJsonStorage("localFilesEnabled", false),
-  sources: readJsonStorage("localFilesSources", []),
-  files: [],
-  manifest: readJsonStorage(LOCAL_FILES_MANIFEST_KEY, []),
-  scanning: false,
-  scanProgress: null,
-  rescanRequiredCount: 0,
-  hydrated: false,
-};
+function createInitialState() {
+  const enabled = readJsonStorage("localFilesEnabled", false);
+  return {
+    enabled,
+    sources: readJsonStorage("localFilesSources", []),
+    files: [],
+    manifest: enabled ? readJsonStorage(LOCAL_FILES_MANIFEST_KEY, []) : [],
+    scanning: false,
+    scanProgress: null,
+    rescanRequiredCount: 0,
+    hydrated: false,
+  };
+}
 
 function reducer(state, action) {
   switch (action.type) {
     case "SET_ENABLED":
-      return { ...state, enabled: action.payload };
+      return action.payload
+        ? { ...state, enabled: true }
+        : { ...state, enabled: false, files: [], manifest: [], scanning: false, scanProgress: null, rescanRequiredCount: 0 };
     case "SET_SOURCES":
       return { ...state, sources: action.payload };
     case "SET_FILES":
@@ -94,17 +100,16 @@ function reducer(state, action) {
     case "UPSERT_BATCH": {
       if (!action.payload.length) return state;
       const next = [...state.files];
-      const byPath = new Map(next.map((file, index) => [file.path, index]));
+      const byPath = action.byPath || new Map(next.map((file, index) => [file.path, index]));
       for (const file of action.payload) {
         const existingIndex = byPath.get(file.path);
         if (existingIndex == null) {
-          byPath.set(file.path, next.length);
           next.push(file);
         } else {
           next[existingIndex] = { ...next[existingIndex], ...file };
         }
       }
-      return { ...state, files: next, manifest: buildManifest(next) };
+      return { ...state, files: next };
     }
     case "SET_SCANNING":
       return { ...state, scanning: action.payload };
@@ -116,6 +121,17 @@ function reducer(state, action) {
       const next = state.files.filter((file) => !removed.has(file.path));
       if (next.length === state.files.length) return state;
       return { ...state, files: next, manifest: buildManifest(next) };
+    }
+    case "SET_FILE_COVER": {
+      const existingIndex = state.files.findIndex((file) => file.path === action.payload.path);
+      if (existingIndex < 0) return state;
+      const next = [...state.files];
+      next[existingIndex] = {
+        ...next[existingIndex],
+        cover: resolveLocalCover(action.payload.cover),
+        rawCoverPath: action.payload.cover,
+      };
+      return { ...state, files: next };
     }
     case "SET_RESCAN_REQUIRED_COUNT":
       return { ...state, rescanRequiredCount: action.payload };
@@ -148,13 +164,27 @@ function toLocalFile(f) {
 }
 
 export function LocalFilesProvider({ children }) {
-  const [state, dispatch] = useReducer(reducer, initialState);
+  const [state, dispatch] = useReducer(reducer, undefined, createInitialState);
   const stateRef = useRef(state);
   stateRef.current = state;
   const autoScanStartedRef = useRef(false);
+  const filesByPathRef = useRef(new Map());
+
+  useEffect(() => {
+    filesByPathRef.current = new Map(state.files.map((file, index) => [file.path, index]));
+  }, [state.files]);
 
   useEffect(() => {
     const hydrate = () => {
+      const enabled = readJsonStorage("localFilesEnabled", false);
+      if (!enabled) {
+        localStorage.removeItem(LOCAL_FILES_CACHE_KEY);
+        localStorage.removeItem(LOCAL_FILES_MANIFEST_KEY);
+        dispatch({ type: "SET_ENABLED", payload: false });
+        dispatch({ type: "SET_HYDRATED", payload: true });
+        return;
+      }
+
       try {
         const raw = localStorage.getItem(LOCAL_FILES_CACHE_KEY);
         if (!raw) return;
@@ -187,7 +217,13 @@ export function LocalFilesProvider({ children }) {
     listen("local-files-batch", (event) => {
       const { files, total } = event.payload;
       const mapped = (files || []).map(toLocalFile);
-      dispatch({ type: "UPSERT_BATCH", payload: mapped });
+      const byPath = filesByPathRef.current;
+      for (const file of mapped) {
+        if (!byPath.has(file.path)) {
+          byPath.set(file.path, byPath.size);
+        }
+      }
+      dispatch({ type: "UPSERT_BATCH", payload: mapped, byPath: filesByPathRef.current });
       dispatch({ type: "SET_SCAN_PROGRESS", payload: `Indexing... ${total} files found` });
     }).then((u) => unsubs.push(u));
 
@@ -196,17 +232,34 @@ export function LocalFilesProvider({ children }) {
 
   useEffect(() => {
     if (!state.hydrated) return;
-    persistFilesCache(state.files);
-    persistManifest(state.files);
-  }, [state.files, state.hydrated]);
+    if (!state.enabled) {
+      localStorage.removeItem(LOCAL_FILES_CACHE_KEY);
+      localStorage.removeItem(LOCAL_FILES_MANIFEST_KEY);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      persistFilesCache(state.files);
+      persistManifest(state.files);
+    }, PERSIST_DEBOUNCE_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [state.files, state.hydrated, state.enabled]);
+
+  const manifest = useMemo(() => buildManifest(state.files), [state.files]);
 
   const setEnabled = useCallback((enabled) => {
     dispatch({ type: "SET_ENABLED", payload: enabled });
     localStorage.setItem("localFilesEnabled", JSON.stringify(enabled));
+    if (!enabled) {
+      localStorage.removeItem(LOCAL_FILES_CACHE_KEY);
+      localStorage.removeItem(LOCAL_FILES_MANIFEST_KEY);
+    }
     updateUserPreferences({ localFilesEnabled: enabled }).catch(() => {});
   }, []);
 
   const runScan = useCallback(async (sources, { allowUpdates = false } = {}) => {
+    if (!stateRef.current.enabled) return;
     if (!sources.length) return;
     dispatch({ type: "SET_SCANNING", payload: true });
     dispatch({ type: "SET_SCAN_PROGRESS", payload: allowUpdates ? "Refreshing local files..." : "Checking for new local files..." });
@@ -221,12 +274,8 @@ export function LocalFilesProvider({ children }) {
           payload: `${allowUpdates ? "Refreshing" : "Checking"} source ${i + 1} of ${sources.length}...`,
         });
 
-        const knownFiles = stateRef.current.manifest?.length
-          ? stateRef.current.manifest
-          : buildManifest(stateRef.current.files);
-
         try {
-          const summary = await scanLocalDirectory(sources[i], knownFiles.length ? knownFiles : null, allowUpdates);
+          const summary = await scanLocalDirectory(sources[i], allowUpdates);
           for (const path of summary?.removedPaths || []) removedPaths.add(path);
           changedCount += Number(summary?.changedCount || 0);
         } catch {}
@@ -266,6 +315,11 @@ export function LocalFilesProvider({ children }) {
     dispatch({ type: "SET_FILES", payload: files });
   }, []);
 
+  const setFileCover = useCallback((path, cover) => {
+    if (!path || !cover) return;
+    dispatch({ type: "SET_FILE_COVER", payload: { path, cover } });
+  }, []);
+
   useEffect(() => {
     if (!state.hydrated) return;
     if (state.enabled && state.sources.length && !autoScanStartedRef.current) {
@@ -275,7 +329,7 @@ export function LocalFilesProvider({ children }) {
   }, [state.enabled, state.sources.length, state.hydrated, state.files.length, scanAllSources]);
 
   return (
-    <LocalFilesContext.Provider value={{ ...state, setEnabled, addSource, removeSource, scanAllSources }}>
+    <LocalFilesContext.Provider value={{ ...state, manifest, setEnabled, addSource, removeSource, scanAllSources, setFileCover }}>
       {children}
     </LocalFilesContext.Provider>
   );

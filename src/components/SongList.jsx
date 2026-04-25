@@ -1,11 +1,14 @@
 import { useState, useEffect, useRef, useCallback, memo } from "react";
 import { Play, Music2, LayoutGrid, List } from "lucide-react";
 import { usePlayer } from "@/stores/playerStore";
+import { useLocalFiles } from "@/stores/localFilesStore";
+import { getLocalFileCover } from "@/lib/api";
 import SongContextMenu from "@/components/SongContextMenu";
 import { toApiUrl } from "@/lib/platform";
 const ROW_H = 52;
 const OVERSCAN = 20;
 const CARD_BATCH = 60;
+const pendingLocalCovers = new Set();
 
 function getScrollParent(el) {
   let p = el?.parentElement;
@@ -108,6 +111,7 @@ function SongList({ songs, viewMode, onViewChange, onInfo, onAddToPlaylist, like
 }
 
 const MemoRow = memo(function SongRow({ song, index, onPlay, onInfo, onAddToPlaylist, liked, onLikeChange }) {
+  useLazyLocalCover(song);
   const cover = song.cover ? (song.local ? song.cover : toApiUrl(song.cover)) : null;
   return (
     <div className="group flex items-center gap-3 rounded-md px-3 py-2 hover:bg-white/[0.05] text-left w-full h-full">
@@ -138,6 +142,7 @@ const MemoRow = memo(function SongRow({ song, index, onPlay, onInfo, onAddToPlay
 });
 
 const MemoCard = memo(function SongCard({ song, index, onPlay, onInfo, onAddToPlaylist, liked, onLikeChange }) {
+  useLazyLocalCover(song);
   const cover = song.cover ? (song.local ? song.cover : toApiUrl(song.cover)) : null;
   return (
     <div className="group relative flex flex-col rounded-xl bg-white/[0.03] border border-white/[0.04] p-3 hover:bg-white/[0.06] text-left">
@@ -165,5 +170,33 @@ const MemoCard = memo(function SongCard({ song, index, onPlay, onInfo, onAddToPl
     </div>
   );
 });
+
+function useLazyLocalCover(song) {
+  const localFiles = useLocalFiles();
+  const setFileCover = localFiles?.setFileCover;
+
+  useEffect(() => {
+    if (!song?.local || song.cover || !song.path || !song.file_hash) return;
+    if (pendingLocalCovers.has(song.path)) return;
+
+    let cancelled = false;
+    pendingLocalCovers.add(song.path);
+
+    getLocalFileCover(song.path, song.file_hash)
+      .then((cover) => {
+        if (!cancelled && cover) {
+          setFileCover?.(song.path, cover);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        pendingLocalCovers.delete(song.path);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [song?.local, song?.cover, song?.path, song?.file_hash, setFileCover]);
+}
 
 export default SongList;
